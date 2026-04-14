@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm -v)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss:*)",
+      "Bash(npm run:*)",
+      "Bash(grep -nB1 -A5 \"getSvgElement\\\\|getSvgString\" node_modules/tldraw/dist-cjs/index.d.ts)",
+      "Bash(grep -nB1 -A12 \"TLImageExportOptions \" node_modules/@tldraw/editor/dist-cjs/index.d.ts)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/)",
+      "Bash(curl -s http://localhost:5173/manifest.webmanifest)",
+      "Bash(kill %1)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(mkdir -p \"C:/Users/Ryan Li/Code/Stealth/EuraAI/backend/app/routes\")",
+      "Bash(mkdir -p \"C:/Users/Ryan Li/Code/Stealth/EuraAI/backend/app/services\")"
+    ]
+  }
+}

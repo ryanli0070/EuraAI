@@ -1,0 +1,18 @@
+{
+  "name": "EuraAI — Socratic Math Tutor",
+  "short_name": "EuraAI",
+  "description": "A Socratic math tutor that guides you to the answer instead of giving it away.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fafafa",
+  "theme_color": "#7c3aed",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
