@@ -1,0 +1,37 @@
+# --- Top-level deps (logical) ---
+# Web framework
+fastapi==0.135.3
+uvicorn==0.44.0
+python-multipart==0.0.26
+python-dotenv==1.2.2
+pydantic==2.13.1
+
+# Phase 3: OCR. pix2text pulls in torch + transformers — first install is heavy.
+# To switch to Mathpix later, replace `pix2text` here and rewrite app/services/ocr.py;
+# the public recognize() signature stays the same.
+pix2text>=1.1.2
+pillow>=10.0.0
+
+# Phase 4: Socratic tutor LLM
+openai>=1.50.0
+
+# Phase 6: symbolic verification + rate limiting
+sympy>=1.13.0
+latex2sympy2_extended>=1.0.0
+slowapi>=0.1.9
+
+# --- Pinned transitives (resolved by pip during initial install) ---
+annotated-types==0.7.0
+anyio==4.13.0
+click==8.3.2
+colorama==0.4.6
+h11==0.16.0
+httptools==0.7.1
+idna==3.11
+pydantic_core==2.46.1
+PyYAML==6.0.3
+starlette==1.0.0
+typing-inspection==0.4.2
+typing_extensions==4.15.0
+watchfiles==1.1.1
+websockets==16.0

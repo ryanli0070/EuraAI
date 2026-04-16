@@ -13,7 +13,27 @@
       "Bash(kill %1)",
       "Bash(pkill -f \"vite\")",
       "Bash(mkdir -p \"C:/Users/Ryan Li/Code/Stealth/EuraAI/backend/app/routes\")",
-      "Bash(mkdir -p \"C:/Users/Ryan Li/Code/Stealth/EuraAI/backend/app/services\")"
+      "Bash(mkdir -p \"C:/Users/Ryan Li/Code/Stealth/EuraAI/backend/app/services\")",
+      "Bash(uv --version)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pip install fastapi \"uvicorn[standard]\" python-multipart pydantic)",
+      "Bash(.venv/Scripts/python.exe -m uvicorn app.main:app --port 8000)",
+      "Bash(curl -s http://localhost:8000/api/health)",
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(python -c \"import sys, json; d=json.load\\(sys.stdin\\); print\\(list\\(d['paths'].keys\\(\\)\\)\\)\")",
+      "Bash(cd /tmp)",
+      "Bash(python -c ' *)",
+      "Bash(curl -s -F \"file=@t.png\" http://localhost:8000/api/check)",
+      "Bash(curl -s -i -X OPTIONS http://localhost:8000/api/check -H \"Origin: http://localhost:5173\" -H \"Access-Control-Request-Method: POST\" -H \"Access-Control-Request-Headers: content-type\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/manifest.webmanifest)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:pix2text.readthedocs.io)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/breezedeus/Pix2Text/main/pix2text/pix_to_text.py\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/breezedeus/Pix2Text/main/pix2text/text_formula_ocr.py\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/OrangeX4/latex2sympy/main/README.md\")",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }

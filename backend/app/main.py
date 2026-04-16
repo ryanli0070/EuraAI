@@ -1,0 +1,42 @@
+import logging
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from app.limiter import limiter
+from app.routes import check
+from app.services import ocr
+
+logging.basicConfig(level=logging.INFO)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    ocr.warm()
+    yield
+
+
+app = FastAPI(title="EuraAI", lifespan=lifespan)
+
+# CORS: comma-separated origins via env, falls back to local Vite dev.
+_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.include_router(check.router, prefix="/api")
+
+
+@app.get("/api/health")
+async def health() -> dict[str, bool]:
+    return {"ok": True}
