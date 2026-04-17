@@ -39,7 +39,8 @@ async def check_work(request: Request, file: UploadFile = File(...)) -> CheckRes
 
         if sympy_idx is not None and (analysis.all_correct or sympy_idx != analysis.first_error_index):
             logger.info("sympy override: llm=%s, sympy=%s", analysis.first_error_index, sympy_idx)
-            hint = tutor.rewrite_hint_for_index(latex, sympy_idx)
+            step_latex = steps_latex[sympy_idx] if 0 <= sympy_idx < len(steps_latex) else ""
+            hint = tutor.rewrite_hint_for_index(latex, sympy_idx, step_latex)
             resp = CheckResponse(latex=latex, hint=hint, step_index=sympy_idx, status="ok")
         else:
             hint, step_index, status = tutor.apply_guardrail(latex, analysis)

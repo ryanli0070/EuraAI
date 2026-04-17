@@ -22,12 +22,33 @@ _MAX_WIDTH = 1600
 _p2t = None  # lazily set by warm()
 
 
+def _patch_rapidocr_config() -> None:
+    # cnstd 1.2.7.1 doesn't pass `model_root_dir` to rapidocr>=3, which then
+    # crashes in Path(None). Fill it in from `model_path` if missing.
+    try:
+        from rapidocr.inference_engine.onnxruntime import main as _ort_main
+    except Exception:
+        return
+    _orig_init = _ort_main.OrtInferSession.__init__
+
+    def _init(self, cfg):
+        if cfg.get("model_root_dir") is None:
+            mp = cfg.get("model_path")
+            if mp:
+                from pathlib import Path as _P
+                cfg["model_root_dir"] = str(_P(mp).parent)
+        return _orig_init(self, cfg)
+
+    _ort_main.OrtInferSession.__init__ = _init
+
+
 def warm() -> None:
     """Cold-load Pix2Text models. Call from FastAPI lifespan startup so the
     first /api/check request doesn't pay the multi-second init cost."""
     global _p2t
     if _p2t is not None:
         return
+    _patch_rapidocr_config()
     from pix2text import Pix2Text  # heavy import — keep lazy
     logger.info("warming pix2text models (first run downloads weights)")
     _p2t = Pix2Text.from_config(enable_table=False)

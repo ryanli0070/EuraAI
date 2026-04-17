@@ -2,14 +2,18 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.limiter import limiter
-from app.routes import check
-from app.services import ocr
+# Load .env before importing modules that read env vars at import time.
+load_dotenv(find_dotenv(usecwd=True))
+
+from app.limiter import limiter  # noqa: E402
+from app.routes import check  # noqa: E402
+from app.services import ocr  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 

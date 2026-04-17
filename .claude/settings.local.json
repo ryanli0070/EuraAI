@@ -33,7 +33,18 @@
       "Bash(curl -s \"https://raw.githubusercontent.com/breezedeus/Pix2Text/main/pix2text/pix_to_text.py\")",
       "Bash(curl -s \"https://raw.githubusercontent.com/breezedeus/Pix2Text/main/pix2text/text_formula_ocr.py\")",
       "Bash(curl -s \"https://raw.githubusercontent.com/OrangeX4/latex2sympy/main/README.md\")",
-      "WebFetch(domain:pypi.org)"
+      "WebFetch(domain:pypi.org)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8000/api/health)",
+      "Bash(.venv/Scripts/python.exe -c \"import fastapi, openai, pix2text, sympy, slowapi, dotenv; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pip install -r requirements.txt)",
+      "Bash(.venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000)",
+      "Bash(.venv/Scripts/python.exe -m pip install \"rapidocr<3\")",
+      "Bash(.venv/Scripts/python.exe -m pip install \"rapidocr==3.8.1\")",
+      "Bash(.venv/Scripts/python.exe -c \"from cnstd.ppocr import rapid_detector; import inspect; print\\(inspect.getsourcefile\\(rapid_detector\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pip index versions cnstd)",
+      "Bash(.venv/Scripts/python.exe -m pip index versions cnocr)",
+      "Bash(curl *)",
+      "Bash(.venv/Scripts/python.exe -c \"from dotenv import find_dotenv, load_dotenv; import os; load_dotenv\\(find_dotenv\\(usecwd=True\\)\\); k=os.getenv\\('OPENAI_API_KEY'\\); print\\('has key:', bool\\(k\\), 'len:', len\\(k\\) if k else 0\\)\")"
     ]
   }
 }

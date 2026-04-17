@@ -32,16 +32,23 @@ def _get_client() -> OpenAI:
     return _client
 
 
-SYSTEM_PROMPT = """You are a Socratic math tutor. The student's handwritten work, transcribed to LaTeX, is given to you. Your job is to find the FIRST step that contains a mathematical error and respond with a leading question that nudges the student to find their own mistake.
+SYSTEM_PROMPT = """You are a Socratic math tutor. The student's handwritten work, transcribed to LaTeX, is given to you as one step per line. Your job is to find the FIRST step that contains a mathematical error and respond with a leading question that nudges the student to find their own mistake.
 
 ABSOLUTE RULES:
 - Never state the correct value of any unknown.
 - Never write the next algebraic step for the student.
 - Never give the answer, even partially (no "x should be larger", no "the sign is wrong on the 4").
-- Phrase the hint as a QUESTION about the student's own work, targeting the wrong step.
-- Keep hints to one sentence in plain English. You may reference math positionally ("the second line", "the right-hand side").
+- Phrase the hint as a QUESTION about the student's own work.
+
+ANCHORING (critical — this is what makes the hint useful):
+- Begin the hint by quoting the student's incorrect step VERBATIM in inline math delimiters, e.g. `In $2x = 10$, ...`, `Looking at $3x + 2 = 15$, ...`, `In your third line, $x = -3$, ...`.
+- The quoted LaTeX must match one of the steps in `steps[*].latex` exactly — do not paraphrase.
+- Also set `first_error_index` to the 0-based index of that step, and set `steps[first_error_index].valid=false`.
+- Keep the whole hint to one sentence. Reference the math positionally in addition to the quote if it helps ("the right-hand side of $2x = 10$").
+
+OTHER CASES:
 - If every step is correct, set all_correct=true and hint="".
-- If the input is unparseable, set first_error_index=0 with a clarifying question."""
+- If the input is unparseable or has only one step, set first_error_index=0 and ask a clarifying question."""
 
 
 # (user_latex, assistant_payload) — the assistant payload is JSON-serialized
@@ -57,7 +64,7 @@ FEW_SHOTS: list[tuple[str, dict]] = [
             ],
             "first_error_index": 1,
             "all_correct": False,
-            "hint": "When you moved the 3 across the equals sign, what operation should you have performed on the other side?",
+            "hint": "In $2x = 10$, when you moved the $+3$ across the equals sign, what operation should you have performed on the other side?",
             "confidence": 0.95,
         },
     ),
@@ -72,7 +79,7 @@ FEW_SHOTS: list[tuple[str, dict]] = [
             ],
             "first_error_index": 1,
             "all_correct": False,
-            "hint": "When you distributed the 3 across the parentheses, did it reach every term inside?",
+            "hint": "In $3x + 2 = 15$, did the $3$ reach every term inside the parentheses when you distributed it?",
             "confidence": 0.97,
         },
     ),
@@ -100,7 +107,7 @@ FEW_SHOTS: list[tuple[str, dict]] = [
             ],
             "first_error_index": 2,
             "all_correct": False,
-            "hint": "Look at your factored form — what value of x makes the second factor equal zero?",
+            "hint": "In $x = 2, x = -3$, check the second root against your factor $(x-3)$ — does substituting it back give zero?",
             "confidence": 0.93,
         },
     ),
@@ -121,15 +128,17 @@ class TutorOutput(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
-# Direct numeric leakage in the hint. These are heuristics, not perfect — they
-# bias toward false positives, which is the right call: a redundant retry costs
-# pennies, a leaked answer breaks the product premise.
+# Prescriptive-phrase leak patterns. We deliberately don't match bare
+# "x = N" any more — the refined prompt requires the hint to quote the
+# student's own (wrong) step verbatim, which trips that pattern. The
+# patterns below target tutor-voice assertions ("the answer is", "should
+# be N") which never appear in a well-formed Socratic hint.
 _LEAK_PATTERNS = [
-    re.compile(r"[a-zA-Z]\s*=\s*-?\d+(\.\d+)?"),               # "x = 2"
     re.compile(r"\bequals?\s+-?\d+(\.\d+)?", re.IGNORECASE),
     re.compile(r"\banswer\s+is\b", re.IGNORECASE),
-    re.compile(r"\bshould\s+be\s+-?\d+(\.\d+)?", re.IGNORECASE),
-    re.compile(r"\bcorrect\s+(?:answer\s+)?is\s+-?\d+", re.IGNORECASE),
+    re.compile(r"\bshould\s+(?:be|equal)\s+-?\d+(\.\d+)?", re.IGNORECASE),
+    re.compile(r"\bcorrect\s+(?:answer|value)\s+is\b", re.IGNORECASE),
+    re.compile(r"\bthe\s+right\s+(?:answer|value)\b", re.IGNORECASE),
 ]
 
 
@@ -167,11 +176,14 @@ def apply_guardrail(latex: str, output: TutorOutput) -> tuple[str, int, str]:
         output = _call_tutor(_get_client(), latex, stricter=True)
         if _hint_leaks_answer(output.hint):
             logger.error("hint leak persisted after retry; falling back to generic")
-            return (
-                "Re-check the step where you transformed the equation — does each side stay equivalent?",
-                output.first_error_index or 0,
-                "ok",
+            idx = output.first_error_index or 0
+            step_latex = output.steps[idx].latex if 0 <= idx < len(output.steps) else ""
+            fallback = (
+                f"Re-check ${step_latex}$ — does it follow from the line above it?"
+                if step_latex
+                else "Re-check the step where you transformed the equation — does each side stay equivalent?"
             )
+            return (fallback, idx, "ok")
 
     return (output.hint, output.first_error_index or 0, "ok")
 
@@ -195,15 +207,17 @@ def _call_tutor(client: OpenAI, latex: str, stricter: bool) -> TutorOutput:
     return parsed
 
 
-def rewrite_hint_for_index(latex: str, error_index: int) -> str:
+def rewrite_hint_for_index(latex: str, error_index: int, step_latex: str) -> str:
     """Used by Phase 6 verification override: SymPy says step `error_index` is
     actually the first wrong one. Generate a hint targeting that exact step,
-    overriding whatever the LLM picked first."""
+    overriding whatever the LLM picked first. `step_latex` is the literal
+    LaTeX of the offending step so the model can quote it."""
     client = _get_client()
     sys_msg = (
         SYSTEM_PROMPT
-        + f"\n\nIMPORTANT: Symbolic verification has determined that the first incorrect step is at "
-        f"0-based index {error_index}. Your hint MUST target that step. Do not contradict this."
+        + f"\n\nIMPORTANT: Symbolic verification has determined that the first incorrect step is "
+        f"0-based index {error_index}, which is: `{step_latex}`. Your hint MUST quote that exact "
+        f"step in $...$ delimiters and target it. Do not contradict this."
     )
     messages: list[dict] = [{"role": "system", "content": sys_msg}]
     for user, assistant in FEW_SHOTS:
@@ -215,7 +229,7 @@ def rewrite_hint_for_index(latex: str, error_index: int) -> str:
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None or _hint_leaks_answer(parsed.hint):
-        return "Re-check the step where you transformed the equation — does each side stay equivalent?"
+        return f"Re-check the step ${step_latex}$ — does it follow from the line above it?"
     return parsed.hint
 
 
