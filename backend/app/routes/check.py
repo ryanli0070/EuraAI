@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, Request, UploadFile
 
 from app.limiter import limiter
 from app.schemas import CheckResponse
-from app.services import log_store, ocr, tutor, verify
+from app.services import log_store, tutor, verify
 
 logger = logging.getLogger(__name__)
 
@@ -21,19 +21,20 @@ async def check_work(request: Request, file: UploadFile = File(...)) -> CheckRes
         image_bytes = await file.read()
         image_hash = hashlib.sha256(image_bytes).hexdigest()
 
-        latex = ocr.recognize(image_bytes)
-        if not latex:
+        # One GPT-4o vision call does OCR + step analysis + Socratic hint.
+        analysis = tutor.check_image(image_bytes)
+        steps_latex = [s.latex for s in analysis.steps]
+        latex = "\n".join(steps_latex)
+
+        if not steps_latex:
             resp = CheckResponse(
                 latex="",
-                hint="I couldn't read any math in that image — try writing larger or darker.",
+                hint="I couldn't see any math on the canvas — try writing larger or darker.",
                 status="no_math",
             )
             log_store.record(image_hash=image_hash, latex="", hint=resp.hint,
                              status=resp.status, step_index=0)
             return resp
-
-        analysis = tutor.analyze(latex)
-        steps_latex = [s.latex for s in analysis.steps]
 
         sympy_idx = verify.first_invalid_step(steps_latex)
 

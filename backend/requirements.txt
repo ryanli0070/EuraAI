@@ -6,13 +6,10 @@ python-multipart==0.0.26
 python-dotenv==1.2.2
 pydantic==2.13.1
 
-# Phase 3: OCR. pix2text pulls in torch + transformers — first install is heavy.
-# To switch to Mathpix later, replace `pix2text` here and rewrite app/services/ocr.py;
-# the public recognize() signature stays the same.
-pix2text>=1.1.2
+# Image handling (downscale whiteboard PNG before shipping to the vision API).
 pillow>=10.0.0
 
-# Phase 4: Socratic tutor LLM
+# Socratic tutor + OCR in one shot via GPT-4o vision (no Pix2Text/torch needed).
 openai>=1.50.0
 
 # Phase 6: symbolic verification + rate limiting

@@ -2,8 +2,6 @@
 # Set secrets before first deploy:
 #   fly secrets set OPENAI_API_KEY=sk-...
 #   fly secrets set CORS_ORIGINS=https://your-frontend.vercel.app
-# Create the persistent volume for pix2text model weights:
-#   fly volumes create pix2text_data --region iad --size 3
 
 app = "euraai-api"
 primary_region = "iad"
@@ -11,22 +9,15 @@ primary_region = "iad"
 [build]
   dockerfile = "Dockerfile"
 
-[env]
-  P2T_MODEL_DIR = "/data/pix2text"
-
 [http_service]
   internal_port = 8000
   force_https = true
-  # Don't auto-stop — Pix2Text takes ~10s to cold-load and we don't want a
-  # student waiting that long on first tap of "Check Work".
-  auto_stop_machines = false
-  min_machines_running = 1
+  # No local ML model — safe to auto-stop idle machines. Cold start is just
+  # uvicorn (<1s) since OpenAI does all the heavy lifting remotely.
+  auto_stop_machines = true
+  min_machines_running = 0
 
 [[vm]]
   cpu_kind = "shared"
-  cpus = 2
-  memory = "2gb"
-
-[[mounts]]
-  source = "pix2text_data"
-  destination = "/data"
+  cpus = 1
+  memory = "512mb"
