@@ -14,7 +14,7 @@ type CheckResponse = {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
-export function Whiteboard() {
+export function Whiteboard({ onHome }: { onHome?: () => void }) {
   const editorRef = useRef<Editor | null>(null)
   const [status, setStatus] = useState<CheckStatus>('idle')
   const [hint, setHint] = useState<string>('')
@@ -79,17 +79,17 @@ export function Whiteboard() {
     <div className="fixed inset-0">
       <Tldraw onMount={handleMount} />
 
-      <a
-        href="#/"
+      <button
+        onClick={onHome}
         className="absolute left-4 top-4 z-[999] rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm backdrop-blur hover:text-neutral-900"
       >
         ← Home
-      </a>
+      </button>
 
       <button
         onClick={handleCheckWork}
         disabled={status === 'checking'}
-        className="absolute bottom-6 right-6 z-[999] rounded-full bg-violet-600 px-6 py-4 text-base font-semibold text-white shadow-lg transition-transform active:scale-95 disabled:opacity-60"
+        className="absolute bottom-6 right-6 z-[999] rounded-full bg-blue-600 px-6 py-4 text-base font-semibold text-white shadow-lg transition-transform active:scale-95 disabled:opacity-60"
         style={{ touchAction: 'manipulation' }}
       >
         {status === 'checking' ? 'Checking…' : 'Check Work'}
