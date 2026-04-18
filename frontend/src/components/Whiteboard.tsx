@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Editor, Tldraw } from 'tldraw'
 import 'tldraw/tldraw.css'
 import katex from 'katex'
@@ -21,6 +21,11 @@ export function Whiteboard() {
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor
+  }, [])
+
+  useEffect(() => {
+    document.body.classList.add('whiteboard-mode')
+    return () => document.body.classList.remove('whiteboard-mode')
   }, [])
 
   const handleCheckWork = useCallback(async () => {
@@ -73,6 +78,13 @@ export function Whiteboard() {
   return (
     <div className="fixed inset-0">
       <Tldraw onMount={handleMount} />
+
+      <a
+        href="#/"
+        className="absolute left-4 top-4 z-[999] rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm backdrop-blur hover:text-neutral-900"
+      >
+        ← Home
+      </a>
 
       <button
         onClick={handleCheckWork}
