@@ -1,6 +1,5 @@
 import logging
 import os
-from contextlib import asynccontextmanager
 
 from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI
@@ -13,18 +12,11 @@ load_dotenv(find_dotenv(usecwd=True))
 
 from app.limiter import limiter  # noqa: E402
 from app.routes import check  # noqa: E402
-from app.services import ocr  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    ocr.warm()
-    yield
-
-
-app = FastAPI(title="EuraAI", lifespan=lifespan)
+app = FastAPI(title="EuraAI")
 
 # CORS: comma-separated origins via env, falls back to local Vite dev.
 _origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]

@@ -44,7 +44,8 @@
       "Bash(.venv/Scripts/python.exe -m pip index versions cnstd)",
       "Bash(.venv/Scripts/python.exe -m pip index versions cnocr)",
       "Bash(curl *)",
-      "Bash(.venv/Scripts/python.exe -c \"from dotenv import find_dotenv, load_dotenv; import os; load_dotenv\\(find_dotenv\\(usecwd=True\\)\\); k=os.getenv\\('OPENAI_API_KEY'\\); print\\('has key:', bool\\(k\\), 'len:', len\\(k\\) if k else 0\\)\")"
+      "Bash(.venv/Scripts/python.exe -c \"from dotenv import find_dotenv, load_dotenv; import os; load_dotenv\\(find_dotenv\\(usecwd=True\\)\\); k=os.getenv\\('OPENAI_API_KEY'\\); print\\('has key:', bool\\(k\\), 'len:', len\\(k\\) if k else 0\\)\")",
+      "Bash(.venv/Scripts/python.exe -c ' *)"
     ]
   }
 }

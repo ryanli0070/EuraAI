@@ -1,26 +1,37 @@
-"""Socratic tutor: LaTeX of student work -> a leading question (never the answer).
+"""Socratic tutor: student's handwritten work (image) -> leading question (never the answer).
 
 Pipeline:
-  1. Single structured-output call to GPT-4o with a system prompt that hard-codes
-     the Socratic constraint and 4 few-shot examples.
-  2. Post-hoc guardrail scans the hint for answer leakage (e.g. "x = 2",
-     "the answer is 5", "should be 4"). If it trips, retry once with a
-     stricter system message; if it trips again, fall back to a safe generic.
+  1. Single structured-output call to GPT-4o VISION with the whiteboard PNG.
+     The model transcribes each step to LaTeX AND identifies the first error AND
+     produces the Socratic hint in one call. This removes the Pix2Text OCR layer
+     that was hallucinating variables on handwritten input.
+  2. Post-hoc guardrail scans the hint for tutor-voice answer leakage
+     ("the answer is", "should be N"). On trip, retry once with a stricter
+     system message; on second trip, fall back to a safe generic.
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import logging
 import re
 from typing import Optional
 
 from openai import OpenAI
+from PIL import Image
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 # Snapshot model that supports structured outputs / Pydantic response_format.
+# GPT-4o is multimodal — same model used for both text rewrites and vision.
 _MODEL = "gpt-4o-2024-08-06"
+
+# Max width of image sent to the vision API. OpenAI bills per tile and the
+# whiteboard PNG is often 3000+px from tldraw's 2x scale. Downscaling to 1600px
+# keeps legibility for handwriting while cutting token cost ~4x.
+_MAX_IMAGE_WIDTH = 1600
 
 _client: Optional[OpenAI] = None
 
@@ -32,7 +43,12 @@ def _get_client() -> OpenAI:
     return _client
 
 
-SYSTEM_PROMPT = """You are a Socratic math tutor. The student's handwritten work, transcribed to LaTeX, is given to you as one step per line. Your job is to find the FIRST step that contains a mathematical error and respond with a leading question that nudges the student to find their own mistake.
+SYSTEM_PROMPT = """You are a Socratic math tutor. You will receive either (a) an image of the student's handwritten math work on a whiteboard, or (b) the same work already transcribed to LaTeX, one step per line.
+
+YOUR TASK:
+1. If given an image, transcribe each distinct step/line to LaTeX and fill steps[*].latex. Be faithful: do NOT introduce variables, operators, or terms that are not visibly written. If a symbol is ambiguous, prefer the simpler reading (e.g. a single variable the student is clearly solving for) over an exotic one.
+2. Find the FIRST step that contains a mathematical error.
+3. Respond with a leading question that nudges the student to find the mistake themselves.
 
 ABSOLUTE RULES:
 - Never state the correct value of any unknown.
@@ -48,6 +64,7 @@ ANCHORING (critical — this is what makes the hint useful):
 
 OTHER CASES:
 - If every step is correct, set all_correct=true and hint="".
+- If the image is blank or contains no math, set steps=[], all_correct=false, first_error_index=null, hint="" and confidence=0.
 - If the input is unparseable or has only one step, set first_error_index=0 and ask a clarifying question."""
 
 
@@ -237,3 +254,49 @@ def analyze(latex: str) -> TutorOutput:
     """Raw structured output from the LLM, no guardrail. Used by callers
     that want the full step list (e.g. the verification path)."""
     return _call_tutor(_get_client(), latex, stricter=False)
+
+
+def _preprocess_image(image_bytes: bytes) -> bytes:
+    """Downscale + normalize the whiteboard PNG before shipping to the vision API."""
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    if img.width > _MAX_IMAGE_WIDTH:
+        ratio = _MAX_IMAGE_WIDTH / img.width
+        img = img.resize((_MAX_IMAGE_WIDTH, int(img.height * ratio)))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _build_vision_messages(image_b64: str) -> list[dict]:
+    """System prompt + text few-shots + the image as the final user turn.
+    Few-shots stay text-only (we don't have labeled handwriting images); their
+    job is to calibrate the output shape and the quoted-anchor hint style."""
+    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for user, assistant in FEW_SHOTS:
+        messages.append({"role": "user", "content": user})
+        messages.append({"role": "assistant", "content": json.dumps(assistant)})
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Here is my handwritten work. Transcribe each step, then check it."},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+        ],
+    })
+    return messages
+
+
+def check_image(image_bytes: bytes) -> TutorOutput:
+    """Single-call path: take the whiteboard PNG, let GPT-4o transcribe +
+    analyze + hint in one shot. Replaces the old Pix2Text OCR -> analyze
+    pipeline (which hallucinated variables on real handwriting)."""
+    png = _preprocess_image(image_bytes)
+    b64 = base64.b64encode(png).decode("ascii")
+    completion = _get_client().beta.chat.completions.parse(
+        model=_MODEL,
+        messages=_build_vision_messages(b64),
+        response_format=TutorOutput,
+        temperature=0.2,
+    )
+    parsed = completion.choices[0].message.parsed
+    assert parsed is not None, "OpenAI returned no parsed payload"
+    return parsed
