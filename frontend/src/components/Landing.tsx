@@ -1,5 +1,6 @@
 import { PenLine, ScanSearch, Lightbulb } from 'lucide-react'
 import { Features } from './ui/features'
+import { HandwritingAnimation } from './HandwritingAnimation'
 
 const HOW_IT_WORKS = [
   {
@@ -7,7 +8,7 @@ const HOW_IT_WORKS = [
     icon: PenLine,
     title: "Draw your steps",
     description: "Write equations step-by-step on an infinite graph-paper canvas. Use a mouse, touch, or Apple Pencil — just like a real whiteboard.",
-    image: "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=600&h=400&fit=crop&auto=format",
+    custom: <HandwritingAnimation />,
   },
   {
     id: 2,

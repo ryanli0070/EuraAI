@@ -6,7 +6,8 @@ interface Feature {
   icon: React.ElementType;
   title: string;
   description: string;
-  image: string;
+  image?: string;
+  custom?: React.ReactNode;
 }
 
 interface FeaturesProps {
@@ -135,13 +136,17 @@ export function Features({
           exit={{ opacity: 0, y: -50 }}
           transition={{ duration: 0.5, ease: "easeOut" }}
         >
-          <img
-            className="rounded-2xl border border-gray-100 shadow-lg w-full"
-            src={features[currentFeature].image}
-            alt={features[currentFeature].title}
-            width={600}
-            height={400}
-          />
+          {features[currentFeature].custom ? (
+            features[currentFeature].custom
+          ) : features[currentFeature].image ? (
+            <img
+              className="rounded-2xl border border-gray-100 shadow-lg w-full"
+              src={features[currentFeature].image}
+              alt={features[currentFeature].title}
+              width={600}
+              height={400}
+            />
+          ) : null}
         </motion.div>
       </div>
     </div>
