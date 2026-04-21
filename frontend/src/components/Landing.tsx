@@ -1,6 +1,7 @@
 import { PenLine, ScanSearch, Lightbulb } from 'lucide-react'
 import { Features } from './ui/features'
 import { HandwritingAnimation } from './HandwritingAnimation'
+import { RobotThinkingAnimation } from './RobotThinkingAnimation'
 
 const HOW_IT_WORKS = [
   {
@@ -15,7 +16,7 @@ const HOW_IT_WORKS = [
     icon: ScanSearch,
     title: "EuraAI finds the mistake",
     description: "Hit Check Work and EuraAI reads your handwriting, parses every step, and pinpoints exactly where the logic breaks down.",
-    image: "https://images.unsplash.com/photo-1596495577886-d920f1fb7238?w=600&h=400&fit=crop&auto=format",
+    custom: <RobotThinkingAnimation />,
   },
   {
     id: 3,

@@ -12,12 +12,42 @@ type CheckResponse = {
   status: 'ok' | 'all_correct' | 'no_math' | 'error'
 }
 
+type ChatRole = 'user' | 'assistant'
+type ChatMessage = { role: ChatRole; text: string; status?: CheckStatus }
+
+type StoredChat = { latex: string; messages: ChatMessage[] }
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const STORAGE_KEY = 'euraai.chat.v1'
+
+function loadChat(): StoredChat {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return { latex: '', messages: [] }
+    const parsed = JSON.parse(raw) as StoredChat
+    if (!Array.isArray(parsed.messages)) return { latex: '', messages: [] }
+    return { latex: parsed.latex ?? '', messages: parsed.messages }
+  } catch {
+    return { latex: '', messages: [] }
+  }
+}
+
+function saveChat(c: StoredChat) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(c))
+  } catch {
+    // storage quota / disabled — not fatal
+  }
+}
 
 export function Whiteboard({ onHome }: { onHome?: () => void }) {
   const editorRef = useRef<Editor | null>(null)
-  const [status, setStatus] = useState<CheckStatus>('idle')
-  const [hint, setHint] = useState<string>('')
+  const initial = useMemo(loadChat, [])
+  const [latex, setLatex] = useState<string>(initial.latex)
+  const [messages, setMessages] = useState<ChatMessage[]>(initial.messages)
+  const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor
@@ -28,17 +58,34 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
     return () => document.body.classList.remove('whiteboard-mode')
   }, [])
 
+  useEffect(() => {
+    saveChat({ latex, messages })
+  }, [latex, messages])
+
+  const appendMessage = useCallback((m: ChatMessage) => {
+    setMessages((prev) => [...prev, m])
+  }, [])
+
+  const clearChat = useCallback(() => {
+    setMessages([])
+    setLatex('')
+    setCheckStatus('idle')
+  }, [])
+
   const handleCheckWork = useCallback(async () => {
     const editor = editorRef.current
     if (!editor) return
+    setCheckStatus('checking')
 
-    setStatus('checking')
-    setHint('')
     try {
       const shapeIds = Array.from(editor.getCurrentPageShapeIds())
       if (shapeIds.length === 0) {
-        setHint('Canvas is empty — draw something first.')
-        setStatus('no_math')
+        appendMessage({
+          role: 'assistant',
+          text: 'Canvas is empty — draw something first.',
+          status: 'no_math',
+        })
+        setCheckStatus('no_math')
         return
       }
 
@@ -48,7 +95,6 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
         padding: 32,
         scale: 2,
       })
-
       const formData = new FormData()
       formData.append('file', blob, 'capture.png')
 
@@ -56,24 +102,59 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
         method: 'POST',
         body: formData,
       })
-      if (!res.ok) {
-        throw new Error(`Server responded ${res.status}`)
-      }
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
       const data = (await res.json()) as CheckResponse
 
-      setHint(data.hint)
-      setStatus(data.status)
+      if (data.latex) setLatex(data.latex)
+      const text =
+        data.status === 'all_correct'
+          ? 'Looks right ✓ — every step you wrote checks out.'
+          : data.hint ||
+            "I couldn't produce a hint — try re-writing the step you're unsure about."
+      appendMessage({ role: 'assistant', text, status: data.status })
+      setCheckStatus(data.status)
     } catch (err) {
       console.error('[EuraAI] check failed', err)
-      setHint(err instanceof Error ? err.message : 'Unknown error')
-      setStatus('error')
+      appendMessage({
+        role: 'assistant',
+        text: err instanceof Error ? err.message : 'Unknown error',
+        status: 'error',
+      })
+      setCheckStatus('error')
     }
-  }, [])
+  }, [appendMessage])
 
-  const dismiss = useCallback(() => {
-    setStatus('idle')
-    setHint('')
-  }, [])
+  const handleSend = useCallback(async () => {
+    const question = input.trim()
+    if (!question || sending) return
+    setInput('')
+    setSending(true)
+    const nextHistory: ChatMessage[] = [...messages, { role: 'user', text: question }]
+    setMessages(nextHistory)
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          latex,
+          history: messages.map((m) => ({ role: m.role, text: m.text })),
+          question,
+        }),
+      })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+      const data = (await res.json()) as { reply: string }
+      appendMessage({ role: 'assistant', text: data.reply })
+    } catch (err) {
+      console.error('[EuraAI] chat failed', err)
+      appendMessage({
+        role: 'assistant',
+        text: err instanceof Error ? err.message : 'Unknown error',
+        status: 'error',
+      })
+    } finally {
+      setSending(false)
+    }
+  }, [appendMessage, input, latex, messages, sending])
 
   return (
     <div className="fixed inset-0">
@@ -88,67 +169,159 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
 
       <button
         onClick={handleCheckWork}
-        disabled={status === 'checking'}
+        disabled={checkStatus === 'checking'}
         className="absolute bottom-6 right-6 z-[999] rounded-full bg-blue-600 px-6 py-4 text-base font-semibold text-white shadow-lg transition-transform active:scale-95 disabled:opacity-60"
         style={{ touchAction: 'manipulation' }}
       >
-        {status === 'checking' ? 'Checking…' : 'Check Work'}
+        {checkStatus === 'checking' ? 'Checking…' : 'Check Work'}
       </button>
 
-      <Callout status={status} hint={hint} onDismiss={dismiss} />
+      <ChatPanel
+        messages={messages}
+        input={input}
+        setInput={setInput}
+        onSend={handleSend}
+        onClear={clearChat}
+        sending={sending}
+        checking={checkStatus === 'checking'}
+      />
     </div>
   )
 }
 
-function Callout({
-  status,
-  hint,
-  onDismiss,
+function ChatPanel({
+  messages,
+  input,
+  setInput,
+  onSend,
+  onClear,
+  sending,
+  checking,
 }: {
-  status: CheckStatus
-  hint: string
-  onDismiss: () => void
+  messages: ChatMessage[]
+  input: string
+  setInput: (s: string) => void
+  onSend: () => void
+  onClear: () => void
+  sending: boolean
+  checking: boolean
 }) {
-  if (status === 'idle' || status === 'checking') return null
+  const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  const tone =
-    status === 'all_correct'
-      ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-      : status === 'error'
-        ? 'bg-red-50 text-red-900 border-red-200'
-        : status === 'no_math'
-          ? 'bg-amber-50 text-amber-900 border-amber-200'
-          : 'bg-white text-neutral-800 border-neutral-200'
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages, sending, checking])
 
-  const title =
-    status === 'all_correct'
-      ? 'Looks right ✓'
-      : status === 'error'
-        ? 'Something went wrong'
-        : status === 'no_math'
-          ? 'Nothing to check'
-          : 'Take another look'
+  const hasMessages = messages.length > 0
 
   return (
     <div
-      className={`absolute bottom-24 right-6 z-[999] max-w-sm rounded-xl border px-4 py-3 shadow-md ${tone}`}
+      className="absolute right-6 top-20 bottom-28 z-[999] flex w-[380px] max-w-[90vw] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl"
+      style={{ maxHeight: 'calc(100vh - 180px)' }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="text-sm font-semibold">{title}</div>
-        <button
-          onClick={onDismiss}
-          aria-label="Dismiss"
-          className="-mr-1 -mt-1 rounded p-1 text-lg leading-none opacity-60 hover:opacity-100"
-        >
-          ×
-        </button>
-      </div>
-      {hint && (
-        <div className="mt-1 text-sm leading-snug">
-          <RichText text={hint} />
+      <div className="flex items-center justify-between border-b border-neutral-100 bg-neutral-50 px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white">
+            E
+          </div>
+          <span className="text-sm font-semibold text-neutral-800">EuraAI</span>
         </div>
-      )}
+        {hasMessages && (
+          <button
+            onClick={onClear}
+            className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+          >
+            Clear chat
+          </button>
+        )}
+      </div>
+
+      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        {!hasMessages && (
+          <div className="pt-6 text-center text-sm text-neutral-400">
+            <p className="font-medium text-neutral-500">Draw your work, then hit Check Work.</p>
+            <p className="mt-1">Ask a follow-up here any time — I'll nudge, not solve.</p>
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <MessageBubble key={i} message={m} />
+        ))}
+        {(sending || checking) && (
+          <div className="flex justify-start">
+            <div className="rounded-2xl rounded-tl-sm bg-neutral-100 px-3 py-2 text-sm text-neutral-500">
+              <TypingDots />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-neutral-100 bg-white px-3 py-2">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                onSend()
+              }
+            }}
+            placeholder="Ask a follow-up…"
+            rows={1}
+            className="max-h-32 flex-1 resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800 outline-none placeholder:text-neutral-400 focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+          />
+          <button
+            onClick={onSend}
+            disabled={!input.trim() || sending}
+            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-all hover:bg-blue-700 active:scale-95 disabled:opacity-50"
+          >
+            Send
+          </button>
+        </div>
+      </div>
     </div>
+  )
+}
+
+function MessageBubble({ message }: { message: ChatMessage }) {
+  if (message.role === 'user') {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-blue-600 px-3 py-2 text-sm text-white">
+          {message.text}
+        </div>
+      </div>
+    )
+  }
+
+  const toneClass =
+    message.status === 'all_correct'
+      ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+      : message.status === 'error'
+        ? 'bg-red-50 text-red-900 border border-red-200'
+        : message.status === 'no_math'
+          ? 'bg-amber-50 text-amber-900 border border-amber-200'
+          : 'bg-neutral-100 text-neutral-800'
+
+  return (
+    <div className="flex justify-start">
+      <div
+        className={`max-w-[85%] rounded-2xl rounded-tl-sm px-3 py-2 text-sm leading-snug ${toneClass}`}
+      >
+        <RichText text={message.text} />
+      </div>
+    </div>
+  )
+}
+
+function TypingDots() {
+  return (
+    <span className="inline-flex gap-1">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400 [animation-delay:-0.3s]" />
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400 [animation-delay:-0.15s]" />
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400" />
+    </span>
   )
 }
 
