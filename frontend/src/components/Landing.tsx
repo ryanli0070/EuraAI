@@ -90,12 +90,12 @@ export function Landing({ onEnter }: LandingProps) {
             >
               Try the whiteboard →
             </button>
-            <a
-              href="#how-it-works"
+            <button
+              onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}
               className="rounded-full px-6 py-3.5 text-base font-medium text-neutral-400 hover:text-neutral-700 transition-colors"
             >
               How it works
-            </a>
+            </button>
           </div>
         </div>
       </section>
