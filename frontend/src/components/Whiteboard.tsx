@@ -3,6 +3,7 @@ import { DefaultColorStyle, Editor, Tldraw } from 'tldraw'
 import type { TLDefaultColorStyle } from 'tldraw'
 import 'tldraw/tldraw.css'
 import katex from 'katex'
+import { Maximize2, Minimize2 } from 'lucide-react'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -16,7 +17,14 @@ type CheckResponse = {
 type ChatRole = 'user' | 'assistant'
 type ChatMessage = { role: ChatRole; text: string; status?: CheckStatus }
 
-type ChatBox = { x: number; y: number; w: number; h: number; collapsed: boolean }
+type ChatBox = {
+  x: number
+  y: number
+  w: number
+  h: number
+  collapsed: boolean
+  attached: boolean
+}
 type StoredChat = { latex: string; messages: ChatMessage[]; box?: ChatBox }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
@@ -26,10 +34,19 @@ const MIN_H = 180
 
 function defaultBox(): ChatBox {
   const vh = typeof window !== 'undefined' ? window.innerHeight : 800
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1200
   const w = 360
-  const h = Math.min(560, Math.max(MIN_H, vh - 220))
-  // Anchor bottom-left by default so tldraw's top-right style panel stays clear.
-  return { x: 24, y: Math.max(80, vh - h - 140), w, h, collapsed: false }
+  const h = Math.min(560, Math.max(MIN_H, vh - 180))
+  // Default: docked to top-right. x/y/w/h become the detached position if
+  // the user pops out — keep them seeded near the same spot for a smooth pop.
+  return {
+    x: Math.max(24, vw - w - 24),
+    y: 80,
+    w,
+    h,
+    collapsed: false,
+    attached: true,
+  }
 }
 
 const COLORS: { value: string; css: string; label: string }[] = [
@@ -54,11 +71,9 @@ function loadChat(): StoredChat {
     if (!raw) return { latex: '', messages: [], box: defaultBox() }
     const parsed = JSON.parse(raw) as StoredChat
     if (!Array.isArray(parsed.messages)) return { latex: '', messages: [], box: defaultBox() }
-    return {
-      latex: parsed.latex ?? '',
-      messages: parsed.messages,
-      box: parsed.box ?? defaultBox(),
-    }
+    // Merge against defaults so older persisted boxes pick up new fields (attached).
+    const box: ChatBox = { ...defaultBox(), ...(parsed.box ?? {}) }
+    return { latex: parsed.latex ?? '', messages: parsed.messages, box }
   } catch {
     return { latex: '', messages: [], box: defaultBox() }
   }
@@ -314,6 +329,7 @@ function ChatPanel({
   const hasMessages = messages.length > 0
 
   const startDrag = (e: React.PointerEvent) => {
+    if (box.attached) return
     if ((e.target as HTMLElement).closest('button')) return
     e.preventDefault()
     const sx = e.clientX
@@ -362,20 +378,34 @@ function ChatPanel({
   const toggleCollapsed = () =>
     setBox((prev) => ({ ...prev, collapsed: !prev.collapsed }))
 
-  return (
-    <div
-      className="absolute z-[999] flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl"
-      style={{
+  const toggleAttached = () =>
+    setBox((prev) => ({ ...prev, attached: !prev.attached }))
+
+  const containerStyle: React.CSSProperties = box.attached
+    ? {}
+    : {
         left: box.x,
         top: box.y,
         width: box.w,
         height: box.collapsed ? 'auto' : box.h,
-      }}
-    >
+      }
+
+  // Attached mode: flush to top-right, stretched down to above the Check Work button.
+  // Collapsed + attached: let it shrink to header height.
+  const containerClass = box.attached
+    ? `absolute right-4 top-4 z-[999] flex w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl ${
+        box.collapsed ? '' : 'bottom-28'
+      }`
+    : 'absolute z-[999] flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl'
+
+  return (
+    <div className={containerClass} style={containerStyle}>
       <div
         onPointerDown={startDrag}
-        className="flex cursor-move select-none items-center justify-between border-b border-neutral-100 bg-neutral-50 px-4 py-2.5"
-        style={{ touchAction: 'none' }}
+        className={`flex select-none items-center justify-between border-b border-neutral-100 bg-neutral-50 px-4 py-2.5 ${
+          box.attached ? '' : 'cursor-move'
+        }`}
+        style={{ touchAction: box.attached ? 'auto' : 'none' }}
       >
         <div className="flex items-center gap-2">
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white">
@@ -392,6 +422,18 @@ function ChatPanel({
               Clear
             </button>
           )}
+          <button
+            onClick={toggleAttached}
+            className="rounded p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+            aria-label={box.attached ? 'Detach panel' : 'Dock to top-right'}
+            title={box.attached ? 'Detach' : 'Dock to top-right'}
+          >
+            {box.attached ? (
+              <Maximize2 className="h-3.5 w-3.5" strokeWidth={2.25} />
+            ) : (
+              <Minimize2 className="h-3.5 w-3.5" strokeWidth={2.25} />
+            )}
+          </button>
           <button
             onClick={toggleCollapsed}
             className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
@@ -448,15 +490,17 @@ function ChatPanel({
         </div>
       </div>
 
-      <div
-        onPointerDown={startResize}
-        className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
-        style={{
-          touchAction: 'none',
-          background:
-            'linear-gradient(135deg, transparent 0%, transparent 55%, rgba(0,0,0,0.25) 55%, rgba(0,0,0,0.25) 65%, transparent 65%, transparent 75%, rgba(0,0,0,0.25) 75%, rgba(0,0,0,0.25) 85%, transparent 85%)',
-        }}
-      />
+      {!box.attached && (
+        <div
+          onPointerDown={startResize}
+          className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
+          style={{
+            touchAction: 'none',
+            background:
+              'linear-gradient(135deg, transparent 0%, transparent 55%, rgba(0,0,0,0.25) 55%, rgba(0,0,0,0.25) 65%, transparent 65%, transparent 75%, rgba(0,0,0,0.25) 75%, rgba(0,0,0,0.25) 85%, transparent 85%)',
+          }}
+        />
+      )}
       </>)}
     </div>
   )
