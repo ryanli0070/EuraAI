@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 load_dotenv(find_dotenv(usecwd=True))
 
 from app.limiter import limiter  # noqa: E402
-from app.routes import chat, check  # noqa: E402
+from app.routes import chat, check, help  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,6 +32,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(check.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
+app.include_router(help.router, prefix="/api")
 
 
 @app.get("/api/health")

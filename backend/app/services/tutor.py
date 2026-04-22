@@ -373,6 +373,59 @@ def ask_followup(latex: str, history: list[dict], question: str) -> str:
     return reply
 
 
+HELP_SYSTEM_PROMPT = """You are a math tutor. The student has explicitly asked for help — they want a clear explanation of what went wrong, not hints or questions.
+
+YOUR TASK:
+1. Transcribe each distinct step to LaTeX (one step per line), filling steps[*].latex.
+2. Find the FIRST step that contains a mathematical error.
+3. Clearly explain: (a) which step is wrong, (b) exactly what the error is, (c) what the correct step should be.
+
+RESPONSE STYLE — explicit, not Socratic:
+- Quote the wrong step verbatim in $...$ delimiters.
+- Name the specific error (e.g. "you forgot to distribute the 3", "the sign flipped incorrectly", "you divided instead of subtracted").
+- State the correct version of that step (e.g. "It should be $2x = 4$").
+- Keep the explanation to 2–3 sentences total.
+
+OTHER CASES:
+- If every step is correct: set all_correct=true, explanation="Your work looks correct — every step follows from the previous one.", first_error_index=null.
+- If blank/no math: set steps=[], all_correct=false, explanation="I couldn't see any math on the canvas — try writing larger or darker.", first_error_index=null, confidence=0."""
+
+
+class HelpOutput(BaseModel):
+    steps: list[Step]
+    first_error_index: Optional[int] = None
+    all_correct: bool
+    explanation: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+def _build_help_vision_messages(image_b64: str) -> list[dict]:
+    messages: list[dict] = [{"role": "system", "content": HELP_SYSTEM_PROMPT}]
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Here is my handwritten work. Please explain exactly what is wrong and how to fix it."},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+        ],
+    })
+    return messages
+
+
+def help_image(image_bytes: bytes) -> HelpOutput:
+    """Explicit help path: GPT-4o identifies the wrong step and explains the error directly."""
+    png = _preprocess_image(image_bytes)
+    b64 = base64.b64encode(png).decode("ascii")
+    completion = _get_client().beta.chat.completions.parse(
+        model=_MODEL,
+        messages=_build_help_vision_messages(b64),
+        response_format=HelpOutput,
+        temperature=0.2,
+    )
+    parsed = completion.choices[0].message.parsed
+    assert parsed is not None, "OpenAI returned no parsed payload"
+    return parsed
+
+
 def check_image(image_bytes: bytes) -> TutorOutput:
     """Single-call path: take the whiteboard PNG, let GPT-4o transcribe +
     analyze + hint in one shot. Replaces the old Pix2Text OCR -> analyze
