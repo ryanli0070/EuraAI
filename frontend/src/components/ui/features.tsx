@@ -13,13 +13,11 @@ interface Feature {
 interface FeaturesProps {
   features: Feature[];
   progressGradientLight?: string;
-  progressGradientDark?: string;
 }
 
 export function Features({
   features,
   progressGradientLight = "bg-gradient-to-r from-blue-400 to-blue-500",
-  progressGradientDark = "bg-gradient-to-r from-blue-300 to-blue-400",
 }: FeaturesProps) {
   const [currentFeature, setCurrentFeature] = useState(0);
   const [progress, setProgress] = useState(0);

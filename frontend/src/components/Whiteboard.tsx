@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Editor, Tldraw } from 'tldraw'
+import { DefaultColorStyle, Editor, Tldraw } from 'tldraw'
+import type { TLDefaultColorStyle } from 'tldraw'
 import 'tldraw/tldraw.css'
 import katex from 'katex'
 
@@ -30,6 +31,22 @@ function defaultBox(): ChatBox {
   // Anchor bottom-left by default so tldraw's top-right style panel stays clear.
   return { x: 24, y: Math.max(80, vh - h - 140), w, h, collapsed: false }
 }
+
+const COLORS: { value: string; css: string; label: string }[] = [
+  { value: 'black',       css: '#1d1d1d', label: 'Black' },
+  { value: 'grey',        css: '#9ca3af', label: 'Grey' },
+  { value: 'red',         css: '#dc2626', label: 'Red' },
+  { value: 'light-red',   css: '#fca5a5', label: 'Pink' },
+  { value: 'orange',      css: '#f97316', label: 'Orange' },
+  { value: 'yellow',      css: '#fbbf24', label: 'Yellow' },
+  { value: 'green',       css: '#16a34a', label: 'Green' },
+  { value: 'light-green', css: '#86efac', label: 'Mint' },
+  { value: 'blue',        css: '#2563eb', label: 'Blue' },
+  { value: 'light-blue',  css: '#93c5fd', label: 'Sky' },
+  { value: 'violet',      css: '#7c3aed', label: 'Violet' },
+  { value: 'white',       css: '#ffffff', label: 'White' },
+]
+
 
 function loadChat(): StoredChat {
   try {
@@ -64,9 +81,33 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [box, setBox] = useState<ChatBox>(() => initial.box ?? defaultBox())
+  const [showColorPanel, setShowColorPanel] = useState(false)
+  const [activeColor, setActiveColor] = useState<TLDefaultColorStyle>('black')
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor
+
+    let prevToolId = ''
+    editor.store.listen(() => {
+      const toolId = editor.getCurrentToolId()
+      if (toolId === 'draw' && prevToolId !== 'draw') {
+        setShowColorPanel(true)
+      } else if (toolId !== 'draw') {
+        setShowColorPanel(false)
+      }
+      prevToolId = toolId
+      const c = editor.getStyleForNextShape(DefaultColorStyle)
+      if (c) setActiveColor(c)
+    })
+
+    // Re-open panel when pencil clicked while already active
+    const el = editor.getContainer()
+    el.addEventListener('pointerdown', (e) => {
+      const target = e.target as HTMLElement
+      if (target.closest('[data-testid="tools.draw"]') && editor.getCurrentToolId() === 'draw') {
+        setShowColorPanel(true)
+      }
+    }, { capture: true })
   }, [])
 
   useEffect(() => {
@@ -174,7 +215,31 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
 
   return (
     <div className="fixed inset-0">
-      <Tldraw onMount={handleMount} />
+      <Tldraw onMount={handleMount} components={{ StylePanel: null }} />
+
+      {showColorPanel && (
+        <div className="absolute left-1/2 z-[999] flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur" style={{ bottom: '72px', transform: 'translateX(-50%)' }}>
+          {COLORS.map((c) => (
+            <button
+              key={c.value}
+              title={c.label}
+              onClick={() => {
+                const v = c.value as TLDefaultColorStyle
+                editorRef.current?.setStyleForNextShapes(DefaultColorStyle, v)
+                editorRef.current?.setStyleForSelectedShapes(DefaultColorStyle, v)
+                setActiveColor(v)
+                setShowColorPanel(false)
+              }}
+              className="h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 active:scale-95"
+              style={{
+                backgroundColor: c.css,
+                borderColor: activeColor === c.value ? '#2563eb' : c.value === 'white' ? '#d1d5db' : 'transparent',
+                boxShadow: activeColor === c.value ? '0 0 0 2px #93c5fd' : 'none',
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       <HomeTab onHome={onHome} />
 
