@@ -285,6 +285,78 @@ def _build_vision_messages(image_b64: str) -> list[dict]:
     return messages
 
 
+FOLLOWUP_SYSTEM_PROMPT = """You are a Socratic math tutor mid-conversation with a student. You will receive:
+- A CONTEXT block with the student's handwritten steps, transcribed to LaTeX (one step per line). May be empty.
+- The prior back-and-forth between you and the student.
+- The student's newest question.
+
+Respond with ONE short reply (one sentence preferred, two maximum) that continues the Socratic dialogue.
+
+ABSOLUTE RULES:
+- Never state the correct value of any unknown.
+- Never write the next algebraic step for the student.
+- Never give the answer, even partially.
+- Phrase your reply as a QUESTION or a redirection to something in the student's own work.
+- If the student begs for the answer ("just tell me", "am I right?", "what is x"), respond with a question pointing them back to a specific step or property they can verify themselves.
+- When referring to one of the student's steps, quote it verbatim in `$...$` delimiters.
+- Do not use the phrase "should be", "the answer is", "equals N", or "the right value"."""
+
+
+def ask_followup(latex: str, history: list[dict], question: str) -> str:
+    """Generate a Socratic follow-up reply.
+
+    `history` is the prior chat turns (excluding the new question), each item
+    shaped {"role": "user"|"assistant", "text": str}. `latex` is the last
+    transcribed canvas content (may be empty if no /check has been run)."""
+    client = _get_client()
+    context_block = (
+        f"[CONTEXT — student's handwritten steps, one per line]\n{latex}"
+        if latex.strip()
+        else "[CONTEXT] (none — no canvas analysis has been run yet)"
+    )
+    messages: list[dict] = [
+        {"role": "system", "content": FOLLOWUP_SYSTEM_PROMPT},
+        {"role": "system", "content": context_block},
+    ]
+    for m in history:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        messages.append({"role": role, "content": m.get("text", "")})
+    messages.append({"role": "user", "content": question})
+
+    def _call(msgs: list[dict]) -> str:
+        completion = client.chat.completions.create(
+            model=_MODEL,
+            messages=msgs,
+            temperature=0.3,
+            max_tokens=220,
+        )
+        return (completion.choices[0].message.content or "").strip()
+
+    reply = _call(messages)
+    if _hint_leaks_answer(reply):
+        logger.warning("followup leaked answer; retrying with stricter system")
+        stricter = messages + [{
+            "role": "system",
+            "content": (
+                "Your previous reply leaked the answer. Rewrite as a pure "
+                "question about the student's own reasoning. Do NOT mention "
+                "any specific numeric value, do NOT use '=' followed by a "
+                "number, do NOT say 'should be N' or 'the answer is'."
+            ),
+        }]
+        reply = _call(stricter)
+        if _hint_leaks_answer(reply):
+            logger.error("followup leak persisted after retry; falling back")
+            return (
+                "Try working through that step on its own — which piece of it "
+                "are you least sure about, and can you check it against the "
+                "line above it?"
+            )
+    return reply
+
+
 def check_image(image_bytes: bytes) -> TutorOutput:
     """Single-call path: take the whiteboard PNG, let GPT-4o transcribe +
     analyze + hint in one shot. Replaces the old Pix2Text OCR -> analyze

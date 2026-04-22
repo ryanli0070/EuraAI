@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Editor, Tldraw } from 'tldraw'
+import { DefaultColorStyle, Editor, Tldraw } from 'tldraw'
+import type { TLDefaultColorStyle } from 'tldraw'
 import 'tldraw/tldraw.css'
 import katex from 'katex'
 
@@ -12,15 +13,101 @@ type CheckResponse = {
   status: 'ok' | 'all_correct' | 'no_math' | 'error'
 }
 
+type ChatRole = 'user' | 'assistant'
+type ChatMessage = { role: ChatRole; text: string; status?: CheckStatus }
+
+type ChatBox = { x: number; y: number; w: number; h: number; collapsed: boolean }
+type StoredChat = { latex: string; messages: ChatMessage[]; box?: ChatBox }
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const STORAGE_KEY = 'euraai.chat.v1'
+const MIN_W = 260
+const MIN_H = 180
+
+function defaultBox(): ChatBox {
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800
+  const w = 360
+  const h = Math.min(560, Math.max(MIN_H, vh - 220))
+  // Anchor bottom-left by default so tldraw's top-right style panel stays clear.
+  return { x: 24, y: Math.max(80, vh - h - 140), w, h, collapsed: false }
+}
+
+const COLORS: { value: string; css: string; label: string }[] = [
+  { value: 'black',       css: '#1d1d1d', label: 'Black' },
+  { value: 'grey',        css: '#9ca3af', label: 'Grey' },
+  { value: 'red',         css: '#dc2626', label: 'Red' },
+  { value: 'light-red',   css: '#fca5a5', label: 'Pink' },
+  { value: 'orange',      css: '#f97316', label: 'Orange' },
+  { value: 'yellow',      css: '#fbbf24', label: 'Yellow' },
+  { value: 'green',       css: '#16a34a', label: 'Green' },
+  { value: 'light-green', css: '#86efac', label: 'Mint' },
+  { value: 'blue',        css: '#2563eb', label: 'Blue' },
+  { value: 'light-blue',  css: '#93c5fd', label: 'Sky' },
+  { value: 'violet',      css: '#7c3aed', label: 'Violet' },
+  { value: 'white',       css: '#ffffff', label: 'White' },
+]
+
+
+function loadChat(): StoredChat {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return { latex: '', messages: [], box: defaultBox() }
+    const parsed = JSON.parse(raw) as StoredChat
+    if (!Array.isArray(parsed.messages)) return { latex: '', messages: [], box: defaultBox() }
+    return {
+      latex: parsed.latex ?? '',
+      messages: parsed.messages,
+      box: parsed.box ?? defaultBox(),
+    }
+  } catch {
+    return { latex: '', messages: [], box: defaultBox() }
+  }
+}
+
+function saveChat(c: StoredChat) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(c))
+  } catch {
+    // storage quota / disabled — not fatal
+  }
+}
 
 export function Whiteboard({ onHome }: { onHome?: () => void }) {
   const editorRef = useRef<Editor | null>(null)
-  const [status, setStatus] = useState<CheckStatus>('idle')
-  const [hint, setHint] = useState<string>('')
+  const initial = useMemo(loadChat, [])
+  const [latex, setLatex] = useState<string>(initial.latex)
+  const [messages, setMessages] = useState<ChatMessage[]>(initial.messages)
+  const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [box, setBox] = useState<ChatBox>(() => initial.box ?? defaultBox())
+  const [showColorPanel, setShowColorPanel] = useState(false)
+  const [activeColor, setActiveColor] = useState<TLDefaultColorStyle>('black')
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor
+
+    let prevToolId = ''
+    editor.store.listen(() => {
+      const toolId = editor.getCurrentToolId()
+      if (toolId === 'draw' && prevToolId !== 'draw') {
+        setShowColorPanel(true)
+      } else if (toolId !== 'draw') {
+        setShowColorPanel(false)
+      }
+      prevToolId = toolId
+      const c = editor.getStyleForNextShape(DefaultColorStyle)
+      if (c) setActiveColor(c)
+    })
+
+    // Re-open panel when pencil clicked while already active
+    const el = editor.getContainer()
+    el.addEventListener('pointerdown', (e) => {
+      const target = e.target as HTMLElement
+      if (target.closest('[data-testid="tools.draw"]') && editor.getCurrentToolId() === 'draw') {
+        setShowColorPanel(true)
+      }
+    }, { capture: true })
   }, [])
 
   useEffect(() => {
@@ -28,17 +115,34 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
     return () => document.body.classList.remove('whiteboard-mode')
   }, [])
 
+  useEffect(() => {
+    saveChat({ latex, messages, box })
+  }, [latex, messages, box])
+
+  const appendMessage = useCallback((m: ChatMessage) => {
+    setMessages((prev) => [...prev, m])
+  }, [])
+
+  const clearChat = useCallback(() => {
+    setMessages([])
+    setLatex('')
+    setCheckStatus('idle')
+  }, [])
+
   const handleCheckWork = useCallback(async () => {
     const editor = editorRef.current
     if (!editor) return
+    setCheckStatus('checking')
 
-    setStatus('checking')
-    setHint('')
     try {
       const shapeIds = Array.from(editor.getCurrentPageShapeIds())
       if (shapeIds.length === 0) {
-        setHint('Canvas is empty — draw something first.')
-        setStatus('no_math')
+        appendMessage({
+          role: 'assistant',
+          text: 'Canvas is empty — draw something first.',
+          status: 'no_math',
+        })
+        setCheckStatus('no_math')
         return
       }
 
@@ -48,7 +152,6 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
         padding: 32,
         scale: 2,
       })
-
       const formData = new FormData()
       formData.append('file', blob, 'capture.png')
 
@@ -56,99 +159,347 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
         method: 'POST',
         body: formData,
       })
-      if (!res.ok) {
-        throw new Error(`Server responded ${res.status}`)
-      }
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
       const data = (await res.json()) as CheckResponse
 
-      setHint(data.hint)
-      setStatus(data.status)
+      if (data.latex) setLatex(data.latex)
+      const text =
+        data.status === 'all_correct'
+          ? 'Looks right ✓ — every step you wrote checks out.'
+          : data.hint ||
+            "I couldn't produce a hint — try re-writing the step you're unsure about."
+      appendMessage({ role: 'assistant', text, status: data.status })
+      setCheckStatus(data.status)
     } catch (err) {
       console.error('[EuraAI] check failed', err)
-      setHint(err instanceof Error ? err.message : 'Unknown error')
-      setStatus('error')
+      appendMessage({
+        role: 'assistant',
+        text: err instanceof Error ? err.message : 'Unknown error',
+        status: 'error',
+      })
+      setCheckStatus('error')
     }
-  }, [])
+  }, [appendMessage])
 
-  const dismiss = useCallback(() => {
-    setStatus('idle')
-    setHint('')
-  }, [])
+  const handleSend = useCallback(async () => {
+    const question = input.trim()
+    if (!question || sending) return
+    setInput('')
+    setSending(true)
+    const nextHistory: ChatMessage[] = [...messages, { role: 'user', text: question }]
+    setMessages(nextHistory)
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          latex,
+          history: messages.map((m) => ({ role: m.role, text: m.text })),
+          question,
+        }),
+      })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+      const data = (await res.json()) as { reply: string }
+      appendMessage({ role: 'assistant', text: data.reply })
+    } catch (err) {
+      console.error('[EuraAI] chat failed', err)
+      appendMessage({
+        role: 'assistant',
+        text: err instanceof Error ? err.message : 'Unknown error',
+        status: 'error',
+      })
+    } finally {
+      setSending(false)
+    }
+  }, [appendMessage, input, latex, messages, sending])
 
   return (
     <div className="fixed inset-0">
-      <Tldraw onMount={handleMount} />
+      <Tldraw onMount={handleMount} components={{ StylePanel: null }} />
 
-      <button
-        onClick={onHome}
-        className="absolute left-4 top-4 z-[999] rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm backdrop-blur hover:text-neutral-900"
-      >
-        ← Home
-      </button>
+      {showColorPanel && (
+        <div className="absolute left-1/2 z-[999] flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur" style={{ bottom: '72px', transform: 'translateX(-50%)' }}>
+          {COLORS.map((c) => (
+            <button
+              key={c.value}
+              title={c.label}
+              onClick={() => {
+                const v = c.value as TLDefaultColorStyle
+                editorRef.current?.setStyleForNextShapes(DefaultColorStyle, v)
+                editorRef.current?.setStyleForSelectedShapes(DefaultColorStyle, v)
+                setActiveColor(v)
+                setShowColorPanel(false)
+              }}
+              className="h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 active:scale-95"
+              style={{
+                backgroundColor: c.css,
+                borderColor: activeColor === c.value ? '#2563eb' : c.value === 'white' ? '#d1d5db' : 'transparent',
+                boxShadow: activeColor === c.value ? '0 0 0 2px #93c5fd' : 'none',
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      <HomeTab onHome={onHome} />
 
       <button
         onClick={handleCheckWork}
-        disabled={status === 'checking'}
+        disabled={checkStatus === 'checking'}
         className="absolute bottom-6 right-6 z-[999] rounded-full bg-blue-600 px-6 py-4 text-base font-semibold text-white shadow-lg transition-transform active:scale-95 disabled:opacity-60"
         style={{ touchAction: 'manipulation' }}
       >
-        {status === 'checking' ? 'Checking…' : 'Check Work'}
+        {checkStatus === 'checking' ? 'Checking…' : 'Check Work'}
       </button>
 
-      <Callout status={status} hint={hint} onDismiss={dismiss} />
+      <ChatPanel
+        messages={messages}
+        input={input}
+        setInput={setInput}
+        onSend={handleSend}
+        onClear={clearChat}
+        sending={sending}
+        checking={checkStatus === 'checking'}
+        box={box}
+        setBox={setBox}
+      />
     </div>
   )
 }
 
-function Callout({
-  status,
-  hint,
-  onDismiss,
+function HomeTab({ onHome }: { onHome?: () => void }) {
+  return (
+    <button
+      onClick={onHome}
+      className="group absolute left-0 top-1/2 z-[999] flex h-20 -translate-y-1/2 items-center overflow-hidden rounded-r-xl border-y border-r border-neutral-200 bg-white/95 pl-1 pr-2 text-neutral-500 shadow-md backdrop-blur transition-all duration-200 hover:pl-3 hover:pr-4 hover:text-neutral-900"
+      aria-label="Home"
+      style={{ touchAction: 'manipulation' }}
+    >
+      <span className="text-base leading-none">‹</span>
+      <span className="ml-0 max-w-0 overflow-hidden whitespace-nowrap text-xs font-medium transition-all duration-200 group-hover:ml-2 group-hover:max-w-[60px]">
+        Home
+      </span>
+    </button>
+  )
+}
+
+function ChatPanel({
+  messages,
+  input,
+  setInput,
+  onSend,
+  onClear,
+  sending,
+  checking,
+  box,
+  setBox,
 }: {
-  status: CheckStatus
-  hint: string
-  onDismiss: () => void
+  messages: ChatMessage[]
+  input: string
+  setInput: (s: string) => void
+  onSend: () => void
+  onClear: () => void
+  sending: boolean
+  checking: boolean
+  box: ChatBox
+  setBox: React.Dispatch<React.SetStateAction<ChatBox>>
 }) {
-  if (status === 'idle' || status === 'checking') return null
+  const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  const tone =
-    status === 'all_correct'
-      ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-      : status === 'error'
-        ? 'bg-red-50 text-red-900 border-red-200'
-        : status === 'no_math'
-          ? 'bg-amber-50 text-amber-900 border-amber-200'
-          : 'bg-white text-neutral-800 border-neutral-200'
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages, sending, checking])
 
-  const title =
-    status === 'all_correct'
-      ? 'Looks right ✓'
-      : status === 'error'
-        ? 'Something went wrong'
-        : status === 'no_math'
-          ? 'Nothing to check'
-          : 'Take another look'
+  const hasMessages = messages.length > 0
+
+  const startDrag = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return
+    e.preventDefault()
+    const sx = e.clientX
+    const sy = e.clientY
+    const start = box
+    const onMove = (ev: PointerEvent) => {
+      const maxX = Math.max(0, window.innerWidth - 80)
+      const maxY = Math.max(0, window.innerHeight - 40)
+      setBox({
+        ...start,
+        x: Math.min(maxX, Math.max(0, start.x + ev.clientX - sx)),
+        y: Math.min(maxY, Math.max(0, start.y + ev.clientY - sy)),
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const sx = e.clientX
+    const sy = e.clientY
+    const start = box
+    const onMove = (ev: PointerEvent) => {
+      const maxW = window.innerWidth - start.x - 8
+      const maxH = window.innerHeight - start.y - 8
+      setBox({
+        ...start,
+        w: Math.max(MIN_W, Math.min(maxW, start.w + ev.clientX - sx)),
+        h: Math.max(MIN_H, Math.min(maxH, start.h + ev.clientY - sy)),
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const toggleCollapsed = () =>
+    setBox((prev) => ({ ...prev, collapsed: !prev.collapsed }))
 
   return (
     <div
-      className={`absolute bottom-24 right-6 z-[999] max-w-sm rounded-xl border px-4 py-3 shadow-md ${tone}`}
+      className="absolute z-[999] flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl"
+      style={{
+        left: box.x,
+        top: box.y,
+        width: box.w,
+        height: box.collapsed ? 'auto' : box.h,
+      }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="text-sm font-semibold">{title}</div>
-        <button
-          onClick={onDismiss}
-          aria-label="Dismiss"
-          className="-mr-1 -mt-1 rounded p-1 text-lg leading-none opacity-60 hover:opacity-100"
-        >
-          ×
-        </button>
-      </div>
-      {hint && (
-        <div className="mt-1 text-sm leading-snug">
-          <RichText text={hint} />
+      <div
+        onPointerDown={startDrag}
+        className="flex cursor-move select-none items-center justify-between border-b border-neutral-100 bg-neutral-50 px-4 py-2.5"
+        style={{ touchAction: 'none' }}
+      >
+        <div className="flex items-center gap-2">
+          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white">
+            E
+          </div>
+          <span className="text-sm font-semibold text-neutral-800">EuraAI</span>
         </div>
-      )}
+        <div className="flex items-center gap-1">
+          {hasMessages && !box.collapsed && (
+            <button
+              onClick={onClear}
+              className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            onClick={toggleCollapsed}
+            className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+            aria-label={box.collapsed ? 'Expand' : 'Collapse'}
+          >
+            {box.collapsed ? '▢' : '—'}
+          </button>
+        </div>
+      </div>
+
+      {box.collapsed ? null : (<>
+
+      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        {!hasMessages && (
+          <div className="pt-6 text-center text-sm text-neutral-400">
+            <p className="font-medium text-neutral-500">Draw your work, then hit Check Work.</p>
+            <p className="mt-1">Ask a follow-up here any time — I'll nudge, not solve.</p>
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <MessageBubble key={i} message={m} />
+        ))}
+        {(sending || checking) && (
+          <div className="flex justify-start">
+            <div className="rounded-2xl rounded-tl-sm bg-neutral-100 px-3 py-2 text-sm text-neutral-500">
+              <TypingDots />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-neutral-100 bg-white px-3 py-2">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                onSend()
+              }
+            }}
+            placeholder="Ask a follow-up…"
+            rows={1}
+            className="max-h-32 flex-1 resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800 outline-none placeholder:text-neutral-400 focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+          />
+          <button
+            onClick={onSend}
+            disabled={!input.trim() || sending}
+            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-all hover:bg-blue-700 active:scale-95 disabled:opacity-50"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+
+      <div
+        onPointerDown={startResize}
+        className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
+        style={{
+          touchAction: 'none',
+          background:
+            'linear-gradient(135deg, transparent 0%, transparent 55%, rgba(0,0,0,0.25) 55%, rgba(0,0,0,0.25) 65%, transparent 65%, transparent 75%, rgba(0,0,0,0.25) 75%, rgba(0,0,0,0.25) 85%, transparent 85%)',
+        }}
+      />
+      </>)}
     </div>
+  )
+}
+
+function MessageBubble({ message }: { message: ChatMessage }) {
+  if (message.role === 'user') {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-blue-600 px-3 py-2 text-sm text-white">
+          {message.text}
+        </div>
+      </div>
+    )
+  }
+
+  const toneClass =
+    message.status === 'all_correct'
+      ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+      : message.status === 'error'
+        ? 'bg-red-50 text-red-900 border border-red-200'
+        : message.status === 'no_math'
+          ? 'bg-amber-50 text-amber-900 border border-amber-200'
+          : 'bg-neutral-100 text-neutral-800'
+
+  return (
+    <div className="flex justify-start">
+      <div
+        className={`max-w-[85%] rounded-2xl rounded-tl-sm px-3 py-2 text-sm leading-snug ${toneClass}`}
+      >
+        <RichText text={message.text} />
+      </div>
+    </div>
+  )
+}
+
+function TypingDots() {
+  return (
+    <span className="inline-flex gap-1">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400 [animation-delay:-0.3s]" />
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400 [animation-delay:-0.15s]" />
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400" />
+    </span>
   )
 }
 
