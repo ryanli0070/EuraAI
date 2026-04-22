@@ -90,9 +90,12 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
     let prevToolId = ''
     editor.store.listen(() => {
       const toolId = editor.getCurrentToolId()
+      const path = editor.getPath()
       if (toolId === 'draw' && prevToolId !== 'draw') {
         setShowColorPanel(true)
       } else if (toolId !== 'draw') {
+        setShowColorPanel(false)
+      } else if (path === 'draw.drawing') {
         setShowColorPanel(false)
       }
       prevToolId = toolId
