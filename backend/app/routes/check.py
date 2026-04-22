@@ -45,6 +45,8 @@ async def check_work(request: Request, file: UploadFile = File(...)) -> CheckRes
             resp = CheckResponse(latex=latex, hint=hint, step_index=sympy_idx, status="ok")
         else:
             hint, step_index, status = tutor.apply_guardrail(latex, analysis)
+            if not hint.strip() and status != "all_correct":
+                status = "all_correct"
             resp = CheckResponse(latex=latex, hint=hint, step_index=step_index, status=status)
 
         log_store.record(image_hash=image_hash, latex=latex, hint=resp.hint,
