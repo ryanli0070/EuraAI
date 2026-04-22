@@ -15,20 +15,35 @@ type CheckResponse = {
 type ChatRole = 'user' | 'assistant'
 type ChatMessage = { role: ChatRole; text: string; status?: CheckStatus }
 
-type StoredChat = { latex: string; messages: ChatMessage[] }
+type ChatBox = { x: number; y: number; w: number; h: number; collapsed: boolean }
+type StoredChat = { latex: string; messages: ChatMessage[]; box?: ChatBox }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const STORAGE_KEY = 'euraai.chat.v1'
+const MIN_W = 260
+const MIN_H = 180
+
+function defaultBox(): ChatBox {
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800
+  const w = 360
+  const h = Math.min(560, Math.max(MIN_H, vh - 220))
+  // Anchor bottom-left by default so tldraw's top-right style panel stays clear.
+  return { x: 24, y: Math.max(80, vh - h - 140), w, h, collapsed: false }
+}
 
 function loadChat(): StoredChat {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { latex: '', messages: [] }
+    if (!raw) return { latex: '', messages: [], box: defaultBox() }
     const parsed = JSON.parse(raw) as StoredChat
-    if (!Array.isArray(parsed.messages)) return { latex: '', messages: [] }
-    return { latex: parsed.latex ?? '', messages: parsed.messages }
+    if (!Array.isArray(parsed.messages)) return { latex: '', messages: [], box: defaultBox() }
+    return {
+      latex: parsed.latex ?? '',
+      messages: parsed.messages,
+      box: parsed.box ?? defaultBox(),
+    }
   } catch {
-    return { latex: '', messages: [] }
+    return { latex: '', messages: [], box: defaultBox() }
   }
 }
 
@@ -48,6 +63,7 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
   const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [box, setBox] = useState<ChatBox>(() => initial.box ?? defaultBox())
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor
@@ -59,8 +75,8 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
   }, [])
 
   useEffect(() => {
-    saveChat({ latex, messages })
-  }, [latex, messages])
+    saveChat({ latex, messages, box })
+  }, [latex, messages, box])
 
   const appendMessage = useCallback((m: ChatMessage) => {
     setMessages((prev) => [...prev, m])
@@ -160,12 +176,7 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
     <div className="fixed inset-0">
       <Tldraw onMount={handleMount} />
 
-      <button
-        onClick={onHome}
-        className="absolute left-4 top-4 z-[999] rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm backdrop-blur hover:text-neutral-900"
-      >
-        ← Home
-      </button>
+      <HomeTab onHome={onHome} />
 
       <button
         onClick={handleCheckWork}
@@ -184,8 +195,26 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
         onClear={clearChat}
         sending={sending}
         checking={checkStatus === 'checking'}
+        box={box}
+        setBox={setBox}
       />
     </div>
+  )
+}
+
+function HomeTab({ onHome }: { onHome?: () => void }) {
+  return (
+    <button
+      onClick={onHome}
+      className="group absolute left-0 top-1/2 z-[999] flex h-20 -translate-y-1/2 items-center overflow-hidden rounded-r-xl border-y border-r border-neutral-200 bg-white/95 pl-1 pr-2 text-neutral-500 shadow-md backdrop-blur transition-all duration-200 hover:pl-3 hover:pr-4 hover:text-neutral-900"
+      aria-label="Home"
+      style={{ touchAction: 'manipulation' }}
+    >
+      <span className="text-base leading-none">‹</span>
+      <span className="ml-0 max-w-0 overflow-hidden whitespace-nowrap text-xs font-medium transition-all duration-200 group-hover:ml-2 group-hover:max-w-[60px]">
+        Home
+      </span>
+    </button>
   )
 }
 
@@ -197,6 +226,8 @@ function ChatPanel({
   onClear,
   sending,
   checking,
+  box,
+  setBox,
 }: {
   messages: ChatMessage[]
   input: string
@@ -205,6 +236,8 @@ function ChatPanel({
   onClear: () => void
   sending: boolean
   checking: boolean
+  box: ChatBox
+  setBox: React.Dispatch<React.SetStateAction<ChatBox>>
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -215,27 +248,96 @@ function ChatPanel({
 
   const hasMessages = messages.length > 0
 
+  const startDrag = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return
+    e.preventDefault()
+    const sx = e.clientX
+    const sy = e.clientY
+    const start = box
+    const onMove = (ev: PointerEvent) => {
+      const maxX = Math.max(0, window.innerWidth - 80)
+      const maxY = Math.max(0, window.innerHeight - 40)
+      setBox({
+        ...start,
+        x: Math.min(maxX, Math.max(0, start.x + ev.clientX - sx)),
+        y: Math.min(maxY, Math.max(0, start.y + ev.clientY - sy)),
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const sx = e.clientX
+    const sy = e.clientY
+    const start = box
+    const onMove = (ev: PointerEvent) => {
+      const maxW = window.innerWidth - start.x - 8
+      const maxH = window.innerHeight - start.y - 8
+      setBox({
+        ...start,
+        w: Math.max(MIN_W, Math.min(maxW, start.w + ev.clientX - sx)),
+        h: Math.max(MIN_H, Math.min(maxH, start.h + ev.clientY - sy)),
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const toggleCollapsed = () =>
+    setBox((prev) => ({ ...prev, collapsed: !prev.collapsed }))
+
   return (
     <div
-      className="absolute right-6 top-20 bottom-28 z-[999] flex w-[380px] max-w-[90vw] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl"
-      style={{ maxHeight: 'calc(100vh - 180px)' }}
+      className="absolute z-[999] flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl"
+      style={{
+        left: box.x,
+        top: box.y,
+        width: box.w,
+        height: box.collapsed ? 'auto' : box.h,
+      }}
     >
-      <div className="flex items-center justify-between border-b border-neutral-100 bg-neutral-50 px-4 py-2.5">
+      <div
+        onPointerDown={startDrag}
+        className="flex cursor-move select-none items-center justify-between border-b border-neutral-100 bg-neutral-50 px-4 py-2.5"
+        style={{ touchAction: 'none' }}
+      >
         <div className="flex items-center gap-2">
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white">
             E
           </div>
           <span className="text-sm font-semibold text-neutral-800">EuraAI</span>
         </div>
-        {hasMessages && (
+        <div className="flex items-center gap-1">
+          {hasMessages && !box.collapsed && (
+            <button
+              onClick={onClear}
+              className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+            >
+              Clear
+            </button>
+          )}
           <button
-            onClick={onClear}
+            onClick={toggleCollapsed}
             className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
+            aria-label={box.collapsed ? 'Expand' : 'Collapse'}
           >
-            Clear chat
+            {box.collapsed ? '▢' : '—'}
           </button>
-        )}
+        </div>
       </div>
+
+      {box.collapsed ? null : (<>
 
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
         {!hasMessages && (
@@ -280,6 +382,17 @@ function ChatPanel({
           </button>
         </div>
       </div>
+
+      <div
+        onPointerDown={startResize}
+        className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
+        style={{
+          touchAction: 'none',
+          background:
+            'linear-gradient(135deg, transparent 0%, transparent 55%, rgba(0,0,0,0.25) 55%, rgba(0,0,0,0.25) 65%, transparent 65%, transparent 75%, rgba(0,0,0,0.25) 75%, rgba(0,0,0,0.25) 85%, transparent 85%)',
+        }}
+      />
+      </>)}
     </div>
   )
 }
