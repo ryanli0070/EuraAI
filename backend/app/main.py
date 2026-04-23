@@ -18,11 +18,13 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="EuraAI")
 
-# CORS: comma-separated origins via env, falls back to local Vite dev.
+# CORS: comma-separated origins via env (prod). In dev, also allow any
+# localhost/127.0.0.1 port so Vite's fallback ports (5174, 5175, …) work.
 _origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
