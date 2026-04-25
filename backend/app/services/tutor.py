@@ -63,9 +63,10 @@ ANCHORING (critical — this is what makes the hint useful):
 - Keep the whole hint to one sentence. Reference the math positionally in addition to the quote if it helps ("the right-hand side of $2x = 10$").
 
 OTHER CASES:
-- If every step is correct, set all_correct=true and hint="".
+- If every step is correct, set all_correct=true, hint="", and first_error_index=null. DO NOT manufacture an error when the math is sound — rewarding correct work is as important as catching mistakes.
 - If the image is blank or contains no math, set steps=[], all_correct=false, first_error_index=null, hint="" and confidence=0.
-- If the input is unparseable or has only one step, set first_error_index=0 and ask a clarifying question."""
+- If the input is unparseable or has only one step, set first_error_index=0 and ask a clarifying question.
+- Before marking any step invalid, verify the algebra yourself. A correct answer using an unconventional method is still correct."""
 
 
 # (user_latex, assistant_payload) — the assistant payload is JSON-serialized
@@ -112,6 +113,21 @@ FEW_SHOTS: list[tuple[str, dict]] = [
             "all_correct": True,
             "hint": "",
             "confidence": 0.99,
+        },
+    ),
+    (
+        "y + 3x = 30\n30 - 3(4) = y\ny = 30 - 12\ny = 18",
+        {
+            "steps": [
+                {"latex": "y + 3x = 30", "valid": True, "error_type": None},
+                {"latex": "30 - 3(4) = y", "valid": True, "error_type": None},
+                {"latex": "y = 30 - 12", "valid": True, "error_type": None},
+                {"latex": "y = 18", "valid": True, "error_type": None},
+            ],
+            "first_error_index": None,
+            "all_correct": True,
+            "hint": "",
+            "confidence": 0.98,
         },
     ),
     (
@@ -185,7 +201,7 @@ def _build_messages(latex: str, stricter: bool) -> list[dict]:
 def apply_guardrail(latex: str, output: TutorOutput) -> tuple[str, int, str]:
     """Take a TutorOutput, run the leak guardrail, return (hint, step_index, status).
     Retries the LLM once with a stricter prompt if leakage is detected."""
-    if output.all_correct:
+    if output.all_correct or not output.hint.strip():
         return ("", 0, "all_correct")
 
     if output.hint and _hint_leaks_answer(output.hint):
@@ -355,6 +371,59 @@ def ask_followup(latex: str, history: list[dict], question: str) -> str:
                 "line above it?"
             )
     return reply
+
+
+HELP_SYSTEM_PROMPT = """You are a math tutor. The student has explicitly asked for help — they want a clear explanation of what went wrong, not hints or questions.
+
+YOUR TASK:
+1. Transcribe each distinct step to LaTeX (one step per line), filling steps[*].latex.
+2. Find the FIRST step that contains a mathematical error.
+3. Clearly explain: (a) which step is wrong, (b) exactly what the error is, (c) what the correct step should be.
+
+RESPONSE STYLE — explicit, not Socratic:
+- Quote the wrong step verbatim in $...$ delimiters.
+- Name the specific error (e.g. "you forgot to distribute the 3", "the sign flipped incorrectly", "you divided instead of subtracted").
+- State the correct version of that step (e.g. "It should be $2x = 4$").
+- Keep the explanation to 2–3 sentences total.
+
+OTHER CASES:
+- If every step is correct: set all_correct=true, explanation="Your work looks correct — every step follows from the previous one.", first_error_index=null.
+- If blank/no math: set steps=[], all_correct=false, explanation="I couldn't see any math on the canvas — try writing larger or darker.", first_error_index=null, confidence=0."""
+
+
+class HelpOutput(BaseModel):
+    steps: list[Step]
+    first_error_index: Optional[int] = None
+    all_correct: bool
+    explanation: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+def _build_help_vision_messages(image_b64: str) -> list[dict]:
+    messages: list[dict] = [{"role": "system", "content": HELP_SYSTEM_PROMPT}]
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Here is my handwritten work. Please explain exactly what is wrong and how to fix it."},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+        ],
+    })
+    return messages
+
+
+def help_image(image_bytes: bytes) -> HelpOutput:
+    """Explicit help path: GPT-4o identifies the wrong step and explains the error directly."""
+    png = _preprocess_image(image_bytes)
+    b64 = base64.b64encode(png).decode("ascii")
+    completion = _get_client().beta.chat.completions.parse(
+        model=_MODEL,
+        messages=_build_help_vision_messages(b64),
+        response_format=HelpOutput,
+        temperature=0.2,
+    )
+    parsed = completion.choices[0].message.parsed
+    assert parsed is not None, "OpenAI returned no parsed payload"
+    return parsed
 
 
 def check_image(image_bytes: bytes) -> TutorOutput:

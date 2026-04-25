@@ -14,6 +14,13 @@ type CheckResponse = {
   status: 'ok' | 'all_correct' | 'no_math' | 'error'
 }
 
+type HelpApiResponse = {
+  latex: string
+  explanation: string
+  step_index: number
+  status: 'ok' | 'all_correct' | 'no_math' | 'error'
+}
+
 type ChatRole = 'user' | 'assistant'
 type ChatMessage = { role: ChatRole; text: string; status?: CheckStatus }
 
@@ -89,10 +96,12 @@ function saveChat(c: StoredChat) {
 
 export function Whiteboard({ onHome }: { onHome?: () => void }) {
   const editorRef = useRef<Editor | null>(null)
+  const checkMenuRef = useRef<HTMLDivElement | null>(null)
   const initial = useMemo(loadChat, [])
   const [latex, setLatex] = useState<string>(initial.latex)
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages)
   const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
+  const [showCheckMenu, setShowCheckMenu] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [box, setBox] = useState<ChatBox>(() => initial.box ?? defaultBox())
@@ -147,57 +156,84 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
     setCheckStatus('idle')
   }, [])
 
-  const handleCheckWork = useCallback(async () => {
-    const editor = editorRef.current
-    if (!editor) return
-    setCheckStatus('checking')
+  useEffect(() => {
+    if (!showCheckMenu) return
+    const handler = (e: MouseEvent) => {
+      if (checkMenuRef.current && !checkMenuRef.current.contains(e.target as Node)) {
+        setShowCheckMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showCheckMenu])
 
+  const captureCanvas = useCallback(async () => {
+    const editor = editorRef.current
+    if (!editor) return null
+    const shapeIds = Array.from(editor.getCurrentPageShapeIds())
+    if (shapeIds.length === 0) return null
+    const { blob } = await editor.toImage(shapeIds, {
+      format: 'png',
+      background: true,
+      padding: 32,
+      scale: 2,
+    })
+    const formData = new FormData()
+    formData.append('file', blob, 'capture.png')
+    return formData
+  }, [])
+
+  const handleHint = useCallback(async () => {
+    setCheckStatus('checking')
     try {
-      const shapeIds = Array.from(editor.getCurrentPageShapeIds())
-      if (shapeIds.length === 0) {
-        appendMessage({
-          role: 'assistant',
-          text: 'Canvas is empty — draw something first.',
-          status: 'no_math',
-        })
+      const formData = await captureCanvas()
+      if (!formData) {
+        appendMessage({ role: 'assistant', text: 'Canvas is empty — draw something first.', status: 'no_math' })
         setCheckStatus('no_math')
         return
       }
-
-      const { blob } = await editor.toImage(shapeIds, {
-        format: 'png',
-        background: true,
-        padding: 32,
-        scale: 2,
-      })
-      const formData = new FormData()
-      formData.append('file', blob, 'capture.png')
-
-      const res = await fetch(`${API_BASE_URL}/api/check`, {
-        method: 'POST',
-        body: formData,
-      })
+      const res = await fetch(`${API_BASE_URL}/api/check`, { method: 'POST', body: formData })
       if (!res.ok) throw new Error(`Server responded ${res.status}`)
       const data = (await res.json()) as CheckResponse
-
       if (data.latex) setLatex(data.latex)
       const text =
         data.status === 'all_correct'
-          ? 'Looks right ✓ — every step you wrote checks out.'
-          : data.hint ||
-            "I couldn't produce a hint — try re-writing the step you're unsure about."
+          ? 'Looks right — every step you wrote checks out.'
+          : data.hint || "I couldn't produce a hint — try re-writing the step you're unsure about."
       appendMessage({ role: 'assistant', text, status: data.status })
       setCheckStatus(data.status)
     } catch (err) {
-      console.error('[EuraAI] check failed', err)
-      appendMessage({
-        role: 'assistant',
-        text: err instanceof Error ? err.message : 'Unknown error',
-        status: 'error',
-      })
+      console.error('[EuraAI] hint failed', err)
+      appendMessage({ role: 'assistant', text: err instanceof Error ? err.message : 'Unknown error', status: 'error' })
       setCheckStatus('error')
     }
-  }, [appendMessage])
+  }, [appendMessage, captureCanvas])
+
+  const handleHelp = useCallback(async () => {
+    setCheckStatus('checking')
+    try {
+      const formData = await captureCanvas()
+      if (!formData) {
+        appendMessage({ role: 'assistant', text: 'Canvas is empty — draw something first.', status: 'no_math' })
+        setCheckStatus('no_math')
+        return
+      }
+      const res = await fetch(`${API_BASE_URL}/api/help`, { method: 'POST', body: formData })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+      const data = (await res.json()) as HelpApiResponse
+      if (data.latex) setLatex(data.latex)
+      const text =
+        data.status === 'all_correct'
+          ? 'Looks right — every step you wrote checks out.'
+          : data.explanation || "I couldn't produce an explanation — try re-writing the step you're unsure about."
+      appendMessage({ role: 'assistant', text, status: data.status })
+      setCheckStatus(data.status)
+    } catch (err) {
+      console.error('[EuraAI] help failed', err)
+      appendMessage({ role: 'assistant', text: err instanceof Error ? err.message : 'Unknown error', status: 'error' })
+      setCheckStatus('error')
+    }
+  }, [appendMessage, captureCanvas])
 
   const handleSend = useCallback(async () => {
     const question = input.trim()
@@ -261,14 +297,35 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
 
       <HomeTab onHome={onHome} />
 
-      <button
-        onClick={handleCheckWork}
-        disabled={checkStatus === 'checking'}
-        className="absolute bottom-6 right-6 z-[999] rounded-full bg-blue-600 px-6 py-4 text-base font-semibold text-white shadow-lg transition-transform active:scale-95 disabled:opacity-60"
-        style={{ touchAction: 'manipulation' }}
-      >
-        {checkStatus === 'checking' ? 'Checking…' : 'Check Work'}
-      </button>
+      <div ref={checkMenuRef} className="absolute bottom-6 right-6 z-[999] flex flex-col items-end gap-2">
+        {showCheckMenu && (
+          <div className="flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl">
+            <button
+              onClick={() => { setShowCheckMenu(false); handleHint() }}
+              className="flex flex-col items-start px-5 py-3 text-left transition-colors hover:bg-neutral-50 active:bg-neutral-100"
+            >
+              <span className="text-sm font-semibold text-neutral-800">Hint</span>
+              <span className="text-xs text-neutral-400">Guide me to find the error</span>
+            </button>
+            <div className="h-px bg-neutral-100" />
+            <button
+              onClick={() => { setShowCheckMenu(false); handleHelp() }}
+              className="flex flex-col items-start px-5 py-3 text-left transition-colors hover:bg-neutral-50 active:bg-neutral-100"
+            >
+              <span className="text-sm font-semibold text-neutral-800">Help</span>
+              <span className="text-xs text-neutral-400">Show me the error and fix</span>
+            </button>
+          </div>
+        )}
+        <button
+          onClick={() => setShowCheckMenu((prev) => !prev)}
+          disabled={checkStatus === 'checking'}
+          className="rounded-full bg-blue-600 px-6 py-4 text-base font-semibold text-white shadow-lg transition-transform active:scale-95 disabled:opacity-60"
+          style={{ touchAction: 'manipulation' }}
+        >
+          {checkStatus === 'checking' ? 'Checking…' : 'Check Work'}
+        </button>
+      </div>
 
       <ChatPanel
         messages={messages}

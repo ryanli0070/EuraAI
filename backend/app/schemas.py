@@ -26,3 +26,10 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+
+class HelpResponse(BaseModel):
+    latex: str = Field(..., description="LaTeX extracted from the canvas image.")
+    explanation: str = Field(..., description="Explicit explanation of the error and how to fix it.")
+    step_index: int = Field(0, description="0-based index of the first wrong step. 0 when not applicable.")
+    status: CheckStatus = "ok"
