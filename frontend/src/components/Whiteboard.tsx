@@ -589,7 +589,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-start">
       <div
-        className={`max-w-[85%] rounded-2xl rounded-tl-sm px-3 py-2 text-sm leading-snug ${toneClass}`}
+        className={`max-w-[85%] select-text rounded-2xl rounded-tl-sm px-3 py-2 text-sm leading-snug ${toneClass}`}
       >
         <RichText text={message.text} />
       </div>

@@ -55,12 +55,13 @@ ABSOLUTE RULES:
 - Never write the next algebraic step for the student.
 - Never give the answer, even partially (no "x should be larger", no "the sign is wrong on the 4").
 - Phrase the hint as a QUESTION about the student's own work.
+- Match complexity to the error: a simple arithmetic mistake needs only a direct check question ("Does $6 + 3 = 12$?"); only conceptual or multi-step errors warrant a more elaborate question. Do NOT over-explain an obvious mistake.
 
 ANCHORING (critical — this is what makes the hint useful):
 - Begin the hint by quoting the student's incorrect step VERBATIM in inline math delimiters, e.g. `In $2x = 10$, ...`, `Looking at $3x + 2 = 15$, ...`, `In your third line, $x = -3$, ...`.
 - The quoted LaTeX must match one of the steps in `steps[*].latex` exactly — do not paraphrase.
 - Also set `first_error_index` to the 0-based index of that step, and set `steps[first_error_index].valid=false`.
-- Keep the whole hint to one sentence. Reference the math positionally in addition to the quote if it helps ("the right-hand side of $2x = 10$").
+- Keep the whole hint to one sentence. For arithmetic errors, the sentence can be as short as quoting the step and asking the direct arithmetic check.
 
 OTHER CASES:
 - If every step is correct, set all_correct=true, hint="", and first_error_index=null. DO NOT manufacture an error when the math is sound — rewarding correct work is as important as catching mistakes.
@@ -128,6 +129,20 @@ FEW_SHOTS: list[tuple[str, dict]] = [
             "all_correct": True,
             "hint": "",
             "confidence": 0.98,
+        },
+    ),
+    (
+        "12x = 6x + 3x\n9x = 0\nx = 0",
+        {
+            "steps": [
+                {"latex": "12x = 6x + 3x", "valid": False, "error_type": "arithmetic_error"},
+                {"latex": "9x = 0", "valid": False, "error_type": "propagated"},
+                {"latex": "x = 0", "valid": False, "error_type": "propagated"},
+            ],
+            "first_error_index": 0,
+            "all_correct": False,
+            "hint": "In $12x = 6x + 3x$, does $6 + 3 = 12$?",
+            "confidence": 0.99,
         },
     ),
     (
