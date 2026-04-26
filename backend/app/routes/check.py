@@ -36,18 +36,23 @@ async def check_work(request: Request, file: UploadFile = File(...)) -> CheckRes
                              status=resp.status, step_index=0)
             return resp
 
-        sympy_idx = verify.first_invalid_step(steps_latex)
-
-        if sympy_idx is not None and (analysis.all_correct or sympy_idx != analysis.first_error_index):
-            logger.info("sympy override: llm=%s, sympy=%s", analysis.first_error_index, sympy_idx)
-            step_latex = steps_latex[sympy_idx] if 0 <= sympy_idx < len(steps_latex) else ""
-            hint = tutor.rewrite_hint_for_index(latex, sympy_idx, step_latex)
-            resp = CheckResponse(latex=latex, hint=hint, step_index=sympy_idx, status="ok")
+        # SymPy parsed all steps and confirmed every transition is valid —
+        # trust it unconditionally; don't let an LLM hint override correct work.
+        if verify.is_definitely_all_correct(steps_latex):
+            logger.info("sympy confirmed all correct; ignoring llm hint")
+            resp = CheckResponse(latex=latex, hint="", step_index=0, status="all_correct")
         else:
-            hint, step_index, status = tutor.apply_guardrail(latex, analysis)
-            if not hint.strip() and status != "all_correct":
-                status = "all_correct"
-            resp = CheckResponse(latex=latex, hint=hint, step_index=step_index, status=status)
+            sympy_idx = verify.first_invalid_step(steps_latex)
+            if sympy_idx is not None and (analysis.all_correct or sympy_idx != analysis.first_error_index):
+                logger.info("sympy override: llm=%s, sympy=%s", analysis.first_error_index, sympy_idx)
+                step_latex = steps_latex[sympy_idx] if 0 <= sympy_idx < len(steps_latex) else ""
+                hint = tutor.rewrite_hint_for_index(latex, sympy_idx, step_latex)
+                resp = CheckResponse(latex=latex, hint=hint, step_index=sympy_idx, status="ok")
+            else:
+                hint, step_index, status = tutor.apply_guardrail(latex, analysis)
+                if not hint.strip() and status != "all_correct":
+                    status = "all_correct"
+                resp = CheckResponse(latex=latex, hint=hint, step_index=step_index, status=status)
 
         log_store.record(image_hash=image_hash, latex=latex, hint=resp.hint,
                          status=resp.status, step_index=resp.step_index)

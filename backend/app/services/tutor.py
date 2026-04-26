@@ -50,6 +50,8 @@ YOUR TASK:
 2. Find the FIRST step that contains a mathematical error.
 3. Respond with a leading question that nudges the student to find the mistake themselves.
 
+MULTIPLE PROBLEMS: The canvas may contain several separate, independent problems. Each problem must be evaluated on its own — do NOT compare steps across different problems. A step is only invalid if it fails to follow from the immediately preceding step of the SAME problem.
+
 ABSOLUTE RULES:
 - Never state the correct value of any unknown.
 - Never write the next algebraic step for the student.
@@ -64,7 +66,7 @@ ANCHORING (critical — this is what makes the hint useful):
 - Keep the whole hint to one sentence. For arithmetic errors, the sentence can be as short as quoting the step and asking the direct arithmetic check.
 
 OTHER CASES:
-- If every step is correct, set all_correct=true, hint="", and first_error_index=null. DO NOT manufacture an error when the math is sound — rewarding correct work is as important as catching mistakes.
+- If every step is correct, set all_correct=true, hint="", and first_error_index=null. This is ABSOLUTE: no hint text, no follow-up question, no verification prompt, no "can you check by substituting back?", no pedagogical nudge of any kind. Algebra and symbol manipulation are held to the same standard as arithmetic — if every step follows correctly from the previous one, all_correct=true and hint="" with no exceptions.
 - If the image is blank or contains no math, set steps=[], all_correct=false, first_error_index=null, hint="" and confidence=0.
 - If the input is unparseable or has only one step, set first_error_index=0 and ask a clarifying question.
 - Before marking any step invalid, verify the algebra yourself. A correct answer using an unconventional method is still correct."""
@@ -142,6 +144,19 @@ FEW_SHOTS: list[tuple[str, dict]] = [
             "first_error_index": 0,
             "all_correct": False,
             "hint": "In $12x = 6x + 3x$, does $6 + 3 = 12$?",
+            "confidence": 0.99,
+        },
+    ),
+    (
+        "x + 3 = 5\nx = 2",
+        {
+            "steps": [
+                {"latex": "x + 3 = 5", "valid": True, "error_type": None},
+                {"latex": "x = 2", "valid": True, "error_type": None},
+            ],
+            "first_error_index": None,
+            "all_correct": True,
+            "hint": "",
             "confidence": 0.99,
         },
     ),
@@ -316,19 +331,22 @@ def _build_vision_messages(image_b64: str) -> list[dict]:
     return messages
 
 
-FOLLOWUP_SYSTEM_PROMPT = """You are a Socratic math tutor mid-conversation with a student. You will receive:
+FOLLOWUP_SYSTEM_PROMPT = """You are a math tutor mid-conversation with a student. You will receive:
 - A CONTEXT block with the student's handwritten steps, transcribed to LaTeX (one step per line). May be empty.
 - The prior back-and-forth between you and the student.
 - The student's newest question.
 
-Respond with ONE short reply (one sentence preferred, two maximum) that continues the Socratic dialogue.
+Respond with ONE short reply (one sentence preferred, two maximum).
 
-ABSOLUTE RULES:
+WHEN TO CONFIRM vs WHEN TO QUESTION:
+- If the student asks "am I correct?", "is this right?", or similar, and their steps in CONTEXT are mathematically correct: reply with a brief direct confirmation ("Yes, that's correct." or "Exactly right."). Do not ask another question — they already did the work correctly.
+- If the student's steps contain an error and they ask for confirmation: gently redirect them to the specific wrong step with a question, without revealing the answer.
+- If the student asks for the next step or the answer on work that has an error: respond with a guiding question about the step that went wrong.
+- For all other follow-ups about incorrect work: continue the Socratic dialogue with a question.
+
+RULES FOR INCORRECT WORK:
 - Never state the correct value of any unknown.
 - Never write the next algebraic step for the student.
-- Never give the answer, even partially.
-- Phrase your reply as a QUESTION or a redirection to something in the student's own work.
-- If the student begs for the answer ("just tell me", "am I right?", "what is x"), respond with a question pointing them back to a specific step or property they can verify themselves.
 - When referring to one of the student's steps, quote it verbatim in `$...$` delimiters.
 - Do not use the phrase "should be", "the answer is", "equals N", or "the right value"."""
 
@@ -394,6 +412,8 @@ YOUR TASK:
 1. Transcribe each distinct step to LaTeX (one step per line), filling steps[*].latex.
 2. Find the FIRST step that contains a mathematical error.
 3. Clearly explain: (a) which step is wrong, (b) exactly what the error is, (c) what the correct step should be.
+
+MULTIPLE PROBLEMS: The canvas may contain several separate, independent problems. Evaluate each problem on its own — do NOT compare steps across different problems. A step is only wrong if it fails to follow from the previous step of the SAME problem.
 
 RESPONSE STYLE — explicit, not Socratic:
 - Quote the wrong step verbatim in $...$ delimiters.
