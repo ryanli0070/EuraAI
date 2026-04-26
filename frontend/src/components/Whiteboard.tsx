@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DefaultColorStyle, Editor, Tldraw } from 'tldraw'
+import { DefaultColorStyle, Editor, Tldraw, TldrawUiMenuActionItem, TldrawUiMenuContextProvider, useCanRedo, useCanUndo } from 'tldraw'
 import type { TLDefaultColorStyle } from 'tldraw'
 import 'tldraw/tldraw.css'
 import katex from 'katex'
@@ -94,6 +94,23 @@ function saveChat(c: StoredChat) {
   }
 }
 
+// Module-level ref so ClearAllQuickActions (defined outside the component tree)
+// can call the board-clear callback without re-creating the component on each render.
+const _clearBoardRef = { current: (() => {}) as () => void }
+
+function ClearAllQuickActions() {
+  const canUndo = useCanUndo()
+  const canRedo = useCanRedo()
+  return (
+    <TldrawUiMenuContextProvider type="small-icons" sourceId="quick-actions">
+      <TldrawUiMenuActionItem actionId="undo" disabled={!canUndo} />
+      <TldrawUiMenuActionItem actionId="redo" disabled={!canRedo} />
+      <TldrawUiMenuActionItem actionId="delete" />
+      <TldrawUiMenuActionItem actionId="duplicate" />
+    </TldrawUiMenuContextProvider>
+  )
+}
+
 export function Whiteboard({ onHome }: { onHome?: () => void }) {
   const editorRef = useRef<Editor | null>(null)
   const checkMenuRef = useRef<HTMLDivElement | null>(null)
@@ -101,6 +118,18 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
   const [latex, setLatex] = useState<string>(initial.latex)
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages)
   const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
+
+  // Keep the module-level ref in sync so ClearAllQuickActions can call it
+  _clearBoardRef.current = () => {
+    const editor = editorRef.current
+    if (!editor) return
+    const ids = Array.from(editor.getCurrentPageShapeIds())
+    if (ids.length > 0) {
+      editor.deleteShapes(ids)
+    }
+    setLatex('')
+    setCheckStatus('idle')
+  }
   const [showCheckMenu, setShowCheckMenu] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -269,7 +298,21 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
 
   return (
     <div className="fixed inset-0">
-      <Tldraw onMount={handleMount} components={{ StylePanel: null }} />
+      <Tldraw
+        onMount={handleMount}
+        components={{ StylePanel: null, QuickActions: ClearAllQuickActions }}
+        overrides={{
+          actions: (_editor, actions) => ({
+            ...actions,
+            delete: {
+              ...actions['delete'],
+              onSelect() {
+                _clearBoardRef.current()
+              },
+            },
+          }),
+        }}
+      />
 
       {showColorPanel && (
         <div className="absolute left-1/2 z-[999] flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur" style={{ bottom: '72px', transform: 'translateX(-50%)' }}>
