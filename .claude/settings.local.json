@@ -46,7 +46,14 @@
       "Bash(curl *)",
       "Bash(.venv/Scripts/python.exe -c \"from dotenv import find_dotenv, load_dotenv; import os; load_dotenv\\(find_dotenv\\(usecwd=True\\)\\); k=os.getenv\\('OPENAI_API_KEY'\\); print\\('has key:', bool\\(k\\), 'len:', len\\(k\\) if k else 0\\)\")",
       "Bash(.venv/Scripts/python.exe -c ' *)",
-      "Bash(.venv/Scripts/uvicorn.exe app.main:app --reload --port 8000)"
+      "Bash(.venv/Scripts/uvicorn.exe app.main:app --reload --port 8000)",
+      "Bash(.venv/Scripts/uvicorn.exe app.main:app --port 8000 --no-access-log)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.get\\('paths',{}\\).keys\\(\\)\\)\\)\")",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":8000\")",
+      "Bash(findstr \"LISTENING\")",
+      "Bash(taskkill /PID 18924 /F)",
+      "PowerShell(Stop-Process *)"
     ]
   }
 }

@@ -404,7 +404,7 @@ export function Landing({ onEnter }: LandingProps) {
                   <span className="hand-word">be handed it.</span>
                 </h1>
                 <p className="hero-sub">
-                  Scribble your math on an infinite sheet of graph paper. EuraAI reads your handwriting, finds your <em>first</em> wrong step, and asks the one question that makes you see it — <em>never</em> the answer.
+                  Scribble your math on an infinite sheet of graph paper. Orion reads your handwriting, finds your <em>first</em> wrong step, and asks the one question that makes you see it — <em>never</em> the answer.
                 </p>
                 <div className="hero-cta">
                   <a href="#start" className="btn" onClick={go}>Open the whiteboard <span className="arrow">→</span></a>
@@ -444,7 +444,7 @@ export function Landing({ onEnter }: LandingProps) {
                   </svg>
 
                   <div className="hint-card">
-                    <div className="label">EuraAI asks</div>
+                    <div className="label">Orion asks</div>
                     <div className="q">You moved <em>+3</em> across the equals — what did you do on the <em>other side</em>?</div>
                   </div>
                 </div>
@@ -473,7 +473,7 @@ export function Landing({ onEnter }: LandingProps) {
                 <div className="kicker"><span className="rule"></span><span className="mono">Ch. 01 — How it works</span></div>
                 <h2>Three steps. <span className="it">No shortcuts</span> to <span className="under">the answer</span>.</h2>
               </div>
-              <p className="lede">You write, Eura reads, Eura asks. The answer stays yours to find — because that's the part where the learning actually happens.</p>
+              <p className="lede">You write, Orion reads, Orion asks. The answer stays yours to find — because that's the part where the learning actually happens.</p>
             </div>
           </div>
 
@@ -508,8 +508,8 @@ export function Landing({ onEnter }: LandingProps) {
 
               <div className="step reveal">
                 <div className="num"><span className="circle">2</span> Check</div>
-                <h3>Eura finds the <span className="it">first</span> slip.</h3>
-                <p>Hit Check Work. EuraAI reads every step like a patient tutor — not scanning for the final answer, but tracing your reasoning until something snaps.</p>
+                <h3>Orion finds the <span className="it">first</span> slip.</h3>
+                <p>Hit Check Work. Orion reads every step like a patient tutor — not scanning for the final answer, but tracing your reasoning until something snaps.</p>
                 <div className="art art-frame">
                   <svg viewBox="0 0 260 160" data-anim="step2">
                     <defs>
@@ -569,7 +569,7 @@ export function Landing({ onEnter }: LandingProps) {
                 <div className="kicker"><span className="rule"></span><span className="mono">Ch. 02 — Why Socratic</span></div>
                 <h2>Most homework help <span className="it">hands you</span> <span className="under">the fish</span>.</h2>
               </div>
-              <p className="lede">EuraAI is built the opposite way. The goal isn't a correct line on the page — it's the <em>click</em> in your head the moment you see your own error.</p>
+              <p className="lede">Orion is built the opposite way. The goal isn't a correct line on the page — it's the <em>click</em> in your head the moment you see your own error.</p>
             </div>
 
             <div className="two">
@@ -585,9 +585,9 @@ export function Landing({ onEnter }: LandingProps) {
                 </svg>
               </div>
               <div className="card good">
-                <span className="mono">EuraAI</span>
+                <span className="mono">Orion</span>
                 <h4>A question that points at <span className="it">your own work</span>.</h4>
-                <p>You do the thinking. Eura is the tutor in the margins — pointing, asking, waiting. The answer arrives in your own handwriting.</p>
+                <p>You do the thinking. Orion is the tutor in the margins — pointing, asking, waiting. The answer arrives in your own handwriting.</p>
                 <svg width="100%" height="80" viewBox="0 0 320 80" style={{ marginTop: 14 }}>
                   <text x="10" y="34" fontFamily="'Caveat', cursive" fontSize="26" fill="#3a4a69">your work</text>
                   <path d="M 110 28 Q 140 10 170 28" stroke="#18243f" strokeWidth="2" fill="none" strokeLinecap="round" />

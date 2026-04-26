@@ -469,9 +469,9 @@ function ChatPanel({
       >
         <div className="flex items-center gap-2">
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white">
-            E
+            O
           </div>
-          <span className="text-sm font-semibold text-neutral-800">EuraAI</span>
+          <span className="text-sm font-semibold text-neutral-800">Orion</span>
         </div>
         <div className="flex items-center gap-1">
           {hasMessages && !box.collapsed && (
