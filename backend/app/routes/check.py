@@ -3,9 +3,13 @@ import logging
 
 from fastapi import APIRouter, File, Request, UploadFile
 
+from app.errors import FileTooLargeError
 from app.limiter import limiter
+from app.routes.uploads import read_with_limit
 from app.schemas import CheckResponse
-from app.services import log_store, tutor, verify
+from app.services import check as check_service
+from app.services import verify
+from app.storage import log_store
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +19,13 @@ router = APIRouter()
 @router.post("/check", response_model=CheckResponse)
 @limiter.limit("20/minute")
 async def check_work(request: Request, file: UploadFile = File(...)) -> CheckResponse:
-    image_bytes = b""
     image_hash = ""
     try:
-        image_bytes = await file.read()
+        image_bytes = await read_with_limit(file)
         image_hash = hashlib.sha256(image_bytes).hexdigest()
 
         # One GPT-4o vision call does OCR + step analysis + Socratic hint.
-        analysis = tutor.check_image(image_bytes)
+        analysis = check_service.check_image(image_bytes)
         steps_latex = [s.latex for s in analysis.steps]
         latex = "\n".join(steps_latex)
 
@@ -46,10 +49,10 @@ async def check_work(request: Request, file: UploadFile = File(...)) -> CheckRes
             if sympy_idx is not None and (analysis.all_correct or sympy_idx != analysis.first_error_index):
                 logger.info("sympy override: llm=%s, sympy=%s", analysis.first_error_index, sympy_idx)
                 step_latex = steps_latex[sympy_idx] if 0 <= sympy_idx < len(steps_latex) else ""
-                hint = tutor.rewrite_hint_for_index(latex, sympy_idx, step_latex)
+                hint = check_service.rewrite_hint_for_index(latex, sympy_idx, step_latex)
                 resp = CheckResponse(latex=latex, hint=hint, step_index=sympy_idx, status="ok")
             else:
-                hint, step_index, status = tutor.apply_guardrail(latex, analysis)
+                hint, step_index, status = check_service.apply_guardrail(latex, analysis)
                 if not hint.strip() and status != "all_correct":
                     status = "all_correct"
                 resp = CheckResponse(latex=latex, hint=hint, step_index=step_index, status=status)
@@ -58,6 +61,9 @@ async def check_work(request: Request, file: UploadFile = File(...)) -> CheckRes
                          status=resp.status, step_index=resp.step_index)
         return resp
 
+    except FileTooLargeError:
+        # Bubble up to the registered EuraError handler -> 413.
+        raise
     except Exception:
         logger.exception("check_work failed")
         if image_hash:

@@ -1,8 +1,9 @@
 .venv
+venv
 __pycache__
 *.pyc
 *.pyo
 .pytest_cache
-eura_checks.sqlite3
+data
 .env
 .git

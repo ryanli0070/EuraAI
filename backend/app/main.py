@@ -1,29 +1,28 @@
 import logging
-import os
 
-from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-# Load .env before importing modules that read env vars at import time.
-load_dotenv(find_dotenv(usecwd=True))
-
-from app.limiter import limiter  # noqa: E402
-from app.routes import chat, check, help  # noqa: E402
+# Import config first — it loads .env and validates required env vars at
+# startup, so the app crashes loudly if (e.g.) OPENAI_API_KEY is missing
+# rather than returning 500s on the first request.
+from app import config
+from app.errors import EuraError, eura_error_handler
+from app.limiter import limiter
+from app.routes import chat, check, help
 
 logging.basicConfig(level=logging.INFO)
 
 
 app = FastAPI(title="EuraAI")
 
-# CORS: comma-separated origins via env (prod). In dev, also allow any
-# localhost/127.0.0.1 port so Vite's fallback ports (5174, 5175, …) work.
-_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+# CORS: explicit origins from env (prod). The regex also lets Vite's fallback
+# ports (5174, 5175, …) work in dev when the canonical port is taken.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_origins,
+    allow_origins=config.CORS_ORIGINS,
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,6 +30,7 @@ app.add_middleware(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(EuraError, eura_error_handler)
 
 app.include_router(check.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")

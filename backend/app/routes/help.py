@@ -3,9 +3,12 @@ import logging
 
 from fastapi import APIRouter, File, Request, UploadFile
 
+from app.errors import FileTooLargeError
 from app.limiter import limiter
+from app.routes.uploads import read_with_limit
 from app.schemas import HelpResponse
-from app.services import log_store, tutor
+from app.services import help as help_service
+from app.storage import log_store
 
 logger = logging.getLogger(__name__)
 
@@ -15,13 +18,12 @@ router = APIRouter()
 @router.post("/help", response_model=HelpResponse)
 @limiter.limit("20/minute")
 async def help_work(request: Request, file: UploadFile = File(...)) -> HelpResponse:
-    image_bytes = b""
     image_hash = ""
     try:
-        image_bytes = await file.read()
+        image_bytes = await read_with_limit(file)
         image_hash = hashlib.sha256(image_bytes).hexdigest()
 
-        analysis = tutor.help_image(image_bytes)
+        analysis = help_service.help_image(image_bytes)
         steps_latex = [s.latex for s in analysis.steps]
         latex = "\n".join(steps_latex)
 
@@ -55,6 +57,8 @@ async def help_work(request: Request, file: UploadFile = File(...)) -> HelpRespo
                          status=resp.status, step_index=resp.step_index)
         return resp
 
+    except FileTooLargeError:
+        raise
     except Exception:
         logger.exception("help_work failed")
         if image_hash:

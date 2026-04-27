@@ -9,10 +9,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path(__file__).resolve().parent.parent.parent / "eura_checks.sqlite3"
+# backend/data/eura_checks.sqlite3 — created lazily on first record().
+_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "eura_checks.sqlite3"
 
 
 def _conn() -> sqlite3.Connection:
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(_DB_PATH)
     conn.execute(
         """

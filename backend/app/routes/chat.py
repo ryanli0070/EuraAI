@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request
 
 from app.limiter import limiter
 from app.schemas import ChatRequest, ChatResponse
-from app.services import tutor
+from app.services import chat as chat_service
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         return ChatResponse(reply="What's your question?")
     try:
         history = [{"role": m.role, "text": m.text} for m in body.history]
-        reply = tutor.ask_followup(body.latex, history, question)
+        reply = chat_service.ask_followup(body.latex, history, question)
         return ChatResponse(reply=reply)
     except Exception:
         logger.exception("chat failed")
