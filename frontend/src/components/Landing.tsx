@@ -101,10 +101,9 @@ const STYLES = `
 .landing-root .hero h1 .strike::after{
   content:"";position:absolute;left:-4%;right:-4%;top:54%;height:10px;
   background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 10' preserveAspectRatio='none'><path d='M2 5 Q 80 1 150 6 T 298 4' stroke='%23b4453d' stroke-width='2.4' fill='none' stroke-linecap='round'/></svg>") no-repeat center/100% 100%;
-  transform-origin:left center;
   animation:euraai-strike-in 0.7s 1.6s cubic-bezier(.6,.1,.3,1) both;
 }
-@keyframes euraai-strike-in{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes euraai-strike-in{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0% 0 0)}}
 
 .landing-root .hero-sub{
   max-width:540px;font-size:19px;line-height:1.55;color:var(--ink-soft);font-weight:400;margin:0 0 44px;
@@ -177,9 +176,9 @@ const STYLES = `
 .landing-root .sec h2 .under::after{
   content:"";position:absolute;left:-2%;right:-2%;bottom:-6px;height:12px;
   background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 12' preserveAspectRatio='none'><path d='M3 7 Q 60 2 140 7 T 297 5' stroke='%23b4453d' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>") no-repeat center/100% 100%;
-  transform-origin:left;transform:scaleX(0);transition:transform 1s cubic-bezier(.6,.1,.3,1);
+  clip-path:inset(0 100% 0 0);transition:clip-path 1s cubic-bezier(.6,.1,.3,1);
 }
-.landing-root .sec.in h2 .under::after{transform:scaleX(1)}
+.landing-root .sec.in h2 .under::after{clip-path:inset(0 0% 0 0)}
 .landing-root .sec .lede{max-width:620px;font-size:19px;color:var(--ink-soft)}
 .landing-root .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:40px;margin-bottom:72px;flex-wrap:wrap}
 .landing-root .sec-head .kicker{display:flex;align-items:center;gap:12px;margin-bottom:18px}
@@ -417,7 +416,7 @@ export function Landing({ onEnter }: LandingProps) {
 
                   <svg className="hero-svg" viewBox="0 0 420 70" style={{ width: '100%', height: '70px', marginBottom: '6px' }}>
                     <g id="eq1">
-                      <path className="draw" style={{ ['--len' as string]: 110 } as React.CSSProperties} d="M 10 18 Q 24 2 38 12 Q 44 32 16 50 L 8 58 L 42 58" />
+                      <path className="draw" style={{ ['--len' as string]: 140 } as React.CSSProperties} d="M 10 18 Q 24 2 38 12 Q 44 32 16 50 L 8 58 L 50 58" />
                       <path className="draw" style={{ ['--len' as string]: 70 } as React.CSSProperties} d="M 54 18 L 80 52" />
                       <path className="draw" style={{ ['--len' as string]: 70 } as React.CSSProperties} d="M 80 18 L 54 52" />
                       <path className="draw" style={{ ['--len' as string]: 30 } as React.CSSProperties} d="M 96 22 L 96 48" />
@@ -432,7 +431,7 @@ export function Landing({ onEnter }: LandingProps) {
 
                   <svg className="hero-svg" viewBox="0 0 420 70" style={{ width: '100%', height: '70px', marginBottom: '6px' }}>
                     <g id="eq2">
-                      <path className="draw" style={{ ['--len' as string]: 110 } as React.CSSProperties} d="M 10 18 Q 24 2 38 12 Q 44 32 16 50 L 8 58 L 42 58" />
+                      <path className="draw" style={{ ['--len' as string]: 140 } as React.CSSProperties} d="M 10 18 Q 24 2 38 12 Q 44 32 16 50 L 8 58 L 50 58" />
                       <path className="draw" style={{ ['--len' as string]: 70 } as React.CSSProperties} d="M 54 18 L 80 52" />
                       <path className="draw" style={{ ['--len' as string]: 70 } as React.CSSProperties} d="M 80 18 L 54 52" />
                       <path className="draw" style={{ ['--len' as string]: 50 } as React.CSSProperties} d="M 100 28 L 128 28" />
@@ -523,10 +522,9 @@ export function Landing({ onEnter }: LandingProps) {
                       <text x="30" y="74">2x = <tspan>10</tspan></text>
                       <text x="30" y="112" fill="#b0b7c3">x = 5</text>
                     </g>
-                    <path className="mark" data-delay="0.2" d="M 170 28 L 178 40 L 198 20" stroke="#2e6b4c" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
                     <path className="mark" data-delay="0.9" d="M 95 42 Q 68 44 70 62 Q 72 86 95 88 Q 122 88 124 62 Q 122 42 95 42" stroke="#b4453d" strokeWidth="2" fill="none" strokeLinecap="round" />
-                    <path className="mark" data-delay="1.4" d="M 124 74 Q 155 80 168 100 Q 174 120 158 132" stroke="#b4453d" strokeWidth="1.8" fill="none" strokeLinecap="round" />
-                    <path className="mark" data-delay="1.6" d="M 154 126 L 158 132 L 164 128" stroke="#b4453d" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                    <path className="mark" data-delay="1.4" d="M 124 74 Q 155 80 168 100 Q 174 120 160 130" stroke="#b4453d" strokeWidth="1.8" fill="none" strokeLinecap="round" />
+                    <path className="mark" data-delay="1.6" d="M 156 125 L 158 132 L 165 130" stroke="#b4453d" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
                     <g className="fade-text" data-delay="1.9" fontFamily="'Caveat', cursive" fontSize="18" fill="#b4453d">
                       <text x="70" y="144">first slip —</text>
                       <text x="70" y="158">should be 4</text>
@@ -548,7 +546,7 @@ export function Landing({ onEnter }: LandingProps) {
                       <text x="36" y="62" className="fade-text" data-delay="1.6"><tspan fontFamily="'Caveat', cursive" fontSize="20" fill="#b4453d">+3</tspan><tspan dx="4">across the </tspan><tspan fontStyle="italic">equals</tspan>,</text>
                       <text x="36" y="80" className="fade-text" data-delay="2.0">what did the other side owe?</text>
                     </g>
-                    <g className="mark" data-delay="2.6" transform="translate(185 110)" stroke="#b4453d" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                    <g className="mark" data-delay="2.6" transform="translate(196 50)" stroke="#b4453d" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M -8 -4 Q -8 -14 0 -14 Q 8 -14 8 -4 Q 8 2 4 6 L 4 10 L -4 10 L -4 6 Q -8 2 -8 -4 Z" />
                       <path d="M -3 14 L 3 14" />
                       <path d="M -14 -8 L -18 -10" />
