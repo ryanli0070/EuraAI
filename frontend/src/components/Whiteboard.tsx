@@ -340,7 +340,7 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
 
       <HomeTab onHome={onHome} />
 
-      <div ref={checkMenuRef} className="absolute bottom-6 right-6 z-[999] flex flex-col items-end gap-2">
+      <div ref={checkMenuRef} className="absolute bottom-6 right-6 z-[1000] flex flex-col items-end gap-2">
         {showCheckMenu && (
           <div className="flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl">
             <button
