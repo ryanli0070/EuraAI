@@ -55,3 +55,18 @@ def first_invalid_step(steps_latex: list[str]) -> Optional[int]:
         if eq is None:
             return None  # bail to avoid false positives
     return None
+
+
+def is_definitely_all_correct(steps_latex: list[str]) -> bool:
+    """Returns True only when SymPy successfully parsed ALL steps and every
+    consecutive transition is algebraically valid. False in all other cases
+    (error found, parse failure, ambiguous comparison, fewer than 2 steps)."""
+    if len(steps_latex) < 2:
+        return False
+    parsed = [_parse(s) for s in steps_latex]
+    if any(p is None for p in parsed):
+        return False
+    for i in range(1, len(parsed)):
+        if _equiv(parsed[i - 1], parsed[i]) is not True:
+            return False
+    return True
