@@ -511,9 +511,11 @@ function ChatPanel({
         style={{ touchAction: box.attached ? 'auto' : 'none' }}
       >
         <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white">
-            O
-          </div>
+          <img
+            src="/images/Orion_Icon.png"
+            alt="Orion"
+            className="h-9 w-9 object-contain"
+          />
           <span className="text-sm font-semibold text-neutral-800">Orion</span>
         </div>
         <div className="flex items-center gap-1">
