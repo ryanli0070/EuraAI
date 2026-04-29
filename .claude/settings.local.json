@@ -53,7 +53,8 @@
       "Bash(findstr \":8000\")",
       "Bash(findstr \"LISTENING\")",
       "Bash(taskkill /PID 18924 /F)",
-      "PowerShell(Stop-Process *)"
+      "PowerShell(Stop-Process *)",
+      "Bash(git fetch *)"
     ]
   }
 }
