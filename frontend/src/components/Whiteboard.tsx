@@ -4,6 +4,14 @@ import type { TLDefaultColorStyle } from 'tldraw'
 import 'tldraw/tldraw.css'
 import katex from 'katex'
 import { Maximize2, Minimize2 } from 'lucide-react'
+import {
+  type ChatBox,
+  type ChatMessage,
+  loadChat as loadCanvasChat,
+  saveChat as saveCanvasChat,
+  setThumbnail,
+  touchCanvas,
+} from '../lib/canvasStore'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -21,21 +29,7 @@ type HelpApiResponse = {
   status: 'ok' | 'all_correct' | 'no_math' | 'error'
 }
 
-type ChatRole = 'user' | 'assistant'
-type ChatMessage = { role: ChatRole; text: string; status?: CheckStatus }
-
-type ChatBox = {
-  x: number
-  y: number
-  w: number
-  h: number
-  collapsed: boolean
-  attached: boolean
-}
-type StoredChat = { latex: string; messages: ChatMessage[]; box?: ChatBox }
-
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
-const STORAGE_KEY = 'euraai.chat.v1'
 const MIN_W = 260
 const MIN_H = 180
 
@@ -72,26 +66,12 @@ const COLORS: { value: string; css: string; label: string }[] = [
 ]
 
 
-function loadChat(): StoredChat {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { latex: '', messages: [], box: defaultBox() }
-    const parsed = JSON.parse(raw) as StoredChat
-    if (!Array.isArray(parsed.messages)) return { latex: '', messages: [], box: defaultBox() }
-    // Merge against defaults so older persisted boxes pick up new fields (attached).
-    const box: ChatBox = { ...defaultBox(), ...(parsed.box ?? {}) }
-    return { latex: parsed.latex ?? '', messages: parsed.messages, box }
-  } catch {
-    return { latex: '', messages: [], box: defaultBox() }
-  }
-}
-
-function saveChat(c: StoredChat) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(c))
-  } catch {
-    // storage quota / disabled — not fatal
-  }
+// Chat state is persisted per-canvas via canvasStore; here we just merge the
+// loaded box against current defaults so older shapes pick up new fields.
+function loadInitialChat(canvasId: string): { latex: string; messages: ChatMessage[]; box: ChatBox } {
+  const stored = loadCanvasChat(canvasId)
+  const box: ChatBox = { ...defaultBox(), ...(stored.box ?? {}) }
+  return { latex: stored.latex, messages: stored.messages, box }
 }
 
 // Module-level ref so ClearAllQuickActions (defined outside the component tree)
@@ -111,10 +91,16 @@ function ClearAllQuickActions() {
   )
 }
 
-export function Whiteboard({ onHome }: { onHome?: () => void }) {
+export function Whiteboard({
+  canvasId,
+  onHome,
+}: {
+  canvasId: string
+  onHome?: () => void
+}) {
   const editorRef = useRef<Editor | null>(null)
   const checkMenuRef = useRef<HTMLDivElement | null>(null)
-  const initial = useMemo(loadChat, [])
+  const initial = useMemo(() => loadInitialChat(canvasId), [canvasId])
   const [latex, setLatex] = useState<string>(initial.latex)
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages)
   const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
@@ -172,8 +158,9 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
   }, [])
 
   useEffect(() => {
-    saveChat({ latex, messages, box })
-  }, [latex, messages, box])
+    saveCanvasChat(canvasId, { latex, messages, box })
+    touchCanvas(canvasId)
+  }, [canvasId, latex, messages, box])
 
   const appendMessage = useCallback((m: ChatMessage) => {
     setMessages((prev) => [...prev, m])
@@ -296,9 +283,42 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
     }
   }, [appendMessage, input, latex, messages, sending])
 
+  // Capture a small thumbnail before leaving so the menu shows a recognizable
+  // preview. Best-effort: fall back to clearing the thumbnail if capture fails
+  // or the canvas is empty, so a now-empty canvas doesn't keep a stale image.
+  const handleHome = useCallback(async () => {
+    const editor = editorRef.current
+    if (editor) {
+      try {
+        const ids = Array.from(editor.getCurrentPageShapeIds())
+        if (ids.length === 0) {
+          setThumbnail(canvasId, undefined)
+        } else {
+          const { blob } = await editor.toImage(ids, {
+            format: 'png',
+            background: true,
+            padding: 16,
+            scale: 0.5,
+          })
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = () => reject(reader.error)
+            reader.readAsDataURL(blob)
+          })
+          setThumbnail(canvasId, dataUrl)
+        }
+      } catch (err) {
+        console.warn('[EuraAI] thumbnail capture failed', err)
+      }
+    }
+    onHome?.()
+  }, [canvasId, onHome])
+
   return (
     <div className="fixed inset-0">
       <Tldraw
+        persistenceKey={`canvas-${canvasId}`}
         onMount={handleMount}
         components={{ StylePanel: null, QuickActions: ClearAllQuickActions }}
         overrides={{
@@ -338,7 +358,7 @@ export function Whiteboard({ onHome }: { onHome?: () => void }) {
         </div>
       )}
 
-      <HomeTab onHome={onHome} />
+      <HomeTab onHome={handleHome} />
 
       <div ref={checkMenuRef} className="absolute bottom-6 right-6 z-[1000] flex flex-col items-end gap-2">
         {showCheckMenu && (

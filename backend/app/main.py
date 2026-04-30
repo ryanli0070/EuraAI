@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from app import config
 from app.errors import EuraError, eura_error_handler
 from app.limiter import limiter
-from app.routes import chat, check, help
+from app.routes import chat, check, help, signup
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,6 +35,7 @@ app.add_exception_handler(EuraError, eura_error_handler)
 app.include_router(check.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(help.router, prefix="/api")
+app.include_router(signup.router, prefix="/api")
 
 
 @app.get("/api/health")
