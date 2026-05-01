@@ -33,14 +33,3 @@ class HelpResponse(BaseModel):
     explanation: str = Field(..., description="Explicit explanation of the error and how to fix it.")
     step_index: int = Field(0, description="0-based index of the first wrong step. 0 when not applicable.")
     status: CheckStatus = "ok"
-
-
-class SignupRequest(BaseModel):
-    email: str = Field(..., max_length=254)
-    source: str | None = Field(default=None, max_length=64,
-                               description="Optional tag for where the signup came from (e.g. 'landing').")
-
-
-class SignupResponse(BaseModel):
-    ok: bool
-    already_subscribed: bool = False
