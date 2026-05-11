@@ -46,7 +46,16 @@ async def check_work(request: Request, file: UploadFile = File(...)) -> CheckRes
             resp = CheckResponse(latex=latex, hint="", step_index=0, status="all_correct")
         else:
             sympy_idx = verify.first_invalid_step(steps_latex)
-            if sympy_idx is not None and (analysis.all_correct or sympy_idx != analysis.first_error_index):
+            # Only let SymPy *relocate* an error the LLM already identified.
+            # The LLM understands multi-problem canvases and cross-problem
+            # references (e.g. "x = 2" then "y = 3x"); SymPy compares
+            # consecutive lines blindly and would flag those boundaries as
+            # invalid transitions. So when the LLM says all_correct, trust it.
+            if (
+                sympy_idx is not None
+                and not analysis.all_correct
+                and sympy_idx != analysis.first_error_index
+            ):
                 logger.info("sympy override: llm=%s, sympy=%s", analysis.first_error_index, sympy_idx)
                 step_latex = steps_latex[sympy_idx] if 0 <= sympy_idx < len(steps_latex) else ""
                 hint = check_service.rewrite_hint_for_index(latex, sympy_idx, step_latex)

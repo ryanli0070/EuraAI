@@ -25,10 +25,22 @@ def _parse(latex: str):
 
 
 def _equiv(a, b) -> Optional[bool]:
-    """Are two parsed steps algebraically equivalent? None if undecidable."""
+    """Are two parsed steps algebraically equivalent? None if undecidable.
+
+    For equations A=B and C=D, equivalent iff (A-B) is a non-zero constant
+    multiple of (C-D). A pure-difference check would only catch add/subtract
+    moves; the ratio check also covers multiply/divide both sides.
+    """
     try:
         if isinstance(a, Eq) and isinstance(b, Eq):
-            return simplify((a.lhs - a.rhs) - (b.lhs - b.rhs)) == 0
+            ea = simplify(a.lhs - a.rhs)
+            eb = simplify(b.lhs - b.rhs)
+            if ea == 0 and eb == 0:
+                return True
+            if ea == 0 or eb == 0:
+                return False
+            ratio = simplify(ea / eb)
+            return bool(ratio.is_number) and ratio != 0
         if not isinstance(a, Eq) and not isinstance(b, Eq):
             return simplify(a - b) == 0
         # Mixed equation/expression — comparison is ambiguous.
