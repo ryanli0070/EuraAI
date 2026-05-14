@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DefaultColorStyle, Editor, Tldraw, TldrawUiMenuActionItem, TldrawUiMenuContextProvider, useCanRedo, useCanUndo } from 'tldraw'
+import { DefaultColorStyle, Editor, react, Tldraw, TldrawUiMenuActionItem, TldrawUiMenuContextProvider, useCanRedo, useCanUndo } from 'tldraw'
 import type { TLDefaultColorStyle } from 'tldraw'
 import 'tldraw/tldraw.css'
 import katex from 'katex'
@@ -122,14 +122,18 @@ export function Whiteboard({
   const [box, setBox] = useState<ChatBox>(() => initial.box ?? defaultBox())
   const [showColorPanel, setShowColorPanel] = useState(false)
   const [activeColor, setActiveColor] = useState<TLDefaultColorStyle>('black')
+  const [currentToolId, setCurrentToolId] = useState<string>('select')
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor
 
+    // Tool changes live in session-scope state; react() tracks them reliably
+    // where store.listen's default filter does not.
     let prevToolId = ''
-    editor.store.listen(() => {
+    react('tool watcher', () => {
       const toolId = editor.getCurrentToolId()
       const path = editor.getPath()
+      setCurrentToolId(toolId)
       if (toolId === 'draw' && prevToolId !== 'draw') {
         setShowColorPanel(true)
       } else if (toolId !== 'draw') {
@@ -138,6 +142,9 @@ export function Whiteboard({
         setShowColorPanel(false)
       }
       prevToolId = toolId
+    })
+
+    editor.store.listen(() => {
       const c = editor.getStyleForNextShape(DefaultColorStyle)
       if (c) setActiveColor(c)
     })
@@ -334,7 +341,7 @@ export function Whiteboard({
         }}
       />
 
-      {showColorPanel && (
+      {showColorPanel && currentToolId === 'draw' && (
         <div className="absolute left-1/2 z-[999] flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur" style={{ bottom: '72px', transform: 'translateX(-50%)' }}>
           {COLORS.map((c) => (
             <button
