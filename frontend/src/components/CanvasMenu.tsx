@@ -57,10 +57,56 @@ const STYLES = `
   border-bottom:1.5px solid var(--ink);background:var(--paper);
   position:sticky;top:0;z-index:10;
 }
-.canvas-menu header.bar .brand{display:flex;align-items:center;gap:10px}
-.canvas-menu header.bar .brand .mark{width:34px;height:34px}
+.canvas-menu header.bar .brand{display:flex;align-items:center;gap:2px}
 .canvas-menu header.bar .brand .word{font-family:var(--sans);font-weight:500;font-size:20px;letter-spacing:-0.01em}
-.canvas-menu header.bar .brand .word em{font-style:italic;font-weight:400;color:var(--pencil)}
+.canvas-menu header.bar .brand .menu-toggle{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:36px;height:36px;border-radius:10px;cursor:pointer;
+  background:transparent;border:1.5px solid transparent;color:var(--ink);
+  transition:background .15s ease, border-color .15s ease;
+}
+.canvas-menu header.bar .brand .menu-toggle:hover{background:var(--paper-2);border-color:var(--rule)}
+
+.canvas-menu .sidebar-backdrop{
+  position:fixed;inset:0;background:rgba(24,36,63,0.28);
+  opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:50;
+}
+.canvas-menu .sidebar-backdrop.open{opacity:1;pointer-events:auto}
+.canvas-menu .sidebar{
+  position:fixed;top:0;left:0;bottom:0;width:280px;
+  background:var(--paper);border-right:1.5px solid var(--ink);
+  transform:translateX(-100%);transition:transform .25s ease;
+  z-index:60;display:flex;flex-direction:column;
+  box-shadow:2px 0 12px rgba(24,36,63,0.08);
+}
+.canvas-menu .sidebar.open{transform:translateX(0)}
+.canvas-menu .sidebar-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:20px 22px;border-bottom:1.5px solid var(--rule);
+}
+.canvas-menu .sidebar-title{
+  font-family:var(--sans);font-weight:500;font-size:18px;letter-spacing:-0.01em;color:var(--ink);
+}
+.canvas-menu .sidebar-close{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:30px;height:30px;border-radius:8px;cursor:pointer;
+  background:transparent;border:none;color:var(--ink-soft);
+  transition:background .15s ease, color .15s ease;
+}
+.canvas-menu .sidebar-close:hover{background:var(--paper-2);color:var(--ink)}
+.canvas-menu .sidebar-nav{display:flex;flex-direction:column;padding:12px 10px;gap:2px}
+.canvas-menu .sidebar-item{
+  display:flex;align-items:center;gap:12px;
+  padding:11px 14px;border-radius:10px;cursor:pointer;
+  background:transparent;border:none;color:var(--ink);
+  font-family:var(--ui);font-size:14px;font-weight:500;text-align:left;
+  transition:background .15s ease;
+}
+.canvas-menu .sidebar-item:hover{background:var(--paper-2)}
+.canvas-menu .sidebar-item-icon{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;color:var(--ink-soft);flex-shrink:0;
+}
 .canvas-menu header.bar .search{
   flex:1;max-width:520px;display:flex;align-items:center;gap:10px;
   border:1.5px solid var(--ink);border-radius:999px;background:#fdfaf2;
@@ -204,6 +250,7 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   const [version, setVersion] = useState(0)
   const [parent, setParent] = useState<FolderId | null>(null)
   const [search, setSearch] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [openMenuId, setOpenMenuId] = useState<ItemId | null>(null)
   const [renamingId, setRenamingId] = useState<ItemId | null>(null)
   const [draggingId, setDraggingId] = useState<ItemId | null>(null)
@@ -322,10 +369,14 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
 
       <header className="bar">
         <div className="brand">
-          <svg className="mark" viewBox="0 0 40 40" fill="none">
-            <path d="M 20 3 C 30 3, 37 11, 37 20 C 37 31, 29 37, 20 37 C 9 37, 3 29, 3 20 C 3 10, 11 3, 20 3 Z" stroke="#18243f" strokeWidth="1.8" strokeLinecap="round" />
-            <path d="M 13 12 L 27 12 M 13 20 L 24 20 M 13 28 L 27 28" stroke="#18243f" strokeWidth="2.2" strokeLinecap="round" />
-          </svg>
+          <button
+            type="button"
+            className="menu-toggle"
+            aria-label="Open menu"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <MenuIcon />
+          </button>
           <span className="word">Eura</span>
         </div>
 
@@ -427,7 +478,59 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
           </div>
         )}
       </main>
+
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
     </div>
+  )
+}
+
+const SIDEBAR_ITEMS = [
+  { label: 'Profile', icon: ProfileIcon },
+  { label: 'Settings', icon: SettingsIcon },
+  { label: 'Payments', icon: PaymentsIcon },
+  { label: 'Help & Support', icon: HelpIcon },
+  { label: 'Sign Out', icon: SignOutIcon },
+]
+
+function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  return (
+    <>
+      <div
+        className={`sidebar-backdrop ${open ? 'open' : ''}`}
+        onClick={onClose}
+        aria-hidden={!open}
+      />
+      <aside
+        className={`sidebar ${open ? 'open' : ''}`}
+        aria-hidden={!open}
+        role="dialog"
+        aria-label="Account menu"
+      >
+        <div className="sidebar-header">
+          <span className="sidebar-title">Menu</span>
+          <button type="button" className="sidebar-close" onClick={onClose} aria-label="Close menu">
+            <CloseIcon />
+          </button>
+        </div>
+        <nav className="sidebar-nav">
+          {SIDEBAR_ITEMS.map((item) => (
+            <button key={item.label} type="button" className="sidebar-item">
+              <span className="sidebar-item-icon"><item.icon /></span>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+      </aside>
+    </>
   )
 }
 
@@ -661,6 +764,62 @@ function DotsIcon() {
       <circle cx="3" cy="8" r="1.4" />
       <circle cx="8" cy="8" r="1.4" />
       <circle cx="13" cy="8" r="1.4" />
+    </svg>
+  )
+}
+function MenuIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+      <path d="M 3 5 L 17 5 M 3 10 L 17 10 M 3 15 L 17 15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+function CloseIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+      <path d="M 5 5 L 15 15 M 15 5 L 5 15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+function ProfileIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+      <circle cx="10" cy="7" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M 3.5 17 Q 3.5 12 10 12 Q 16.5 12 16.5 17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+function SettingsIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+      <circle cx="10" cy="10" r="2.4" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M 10 2.5 L 10 5 M 10 15 L 10 17.5 M 2.5 10 L 5 10 M 15 10 L 17.5 10 M 4.7 4.7 L 6.5 6.5 M 13.5 13.5 L 15.3 15.3 M 4.7 15.3 L 6.5 13.5 M 13.5 6.5 L 15.3 4.7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+function PaymentsIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+      <rect x="2.5" y="5" width="15" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M 2.5 8.5 L 17.5 8.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M 5 12.5 L 8 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+function HelpIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+      <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M 7.8 7.8 Q 8 5.5 10 5.5 Q 12 5.5 12 7.5 Q 12 9 10 10 L 10 11.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+      <circle cx="10" cy="14" r="0.9" fill="currentColor" />
+    </svg>
+  )
+}
+function SignOutIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+      <path d="M 11 3 L 4 3 Q 3 3 3 4 L 3 16 Q 3 17 4 17 L 11 17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M 8 10 L 17 10 M 14 7 L 17 10 L 14 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
