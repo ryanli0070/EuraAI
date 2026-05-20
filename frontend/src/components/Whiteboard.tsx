@@ -365,7 +365,7 @@ export function Whiteboard({
         </div>
       )}
 
-      <HomeTab onHome={handleHome} />
+      <HomeButton onHome={handleHome} />
 
       <div ref={checkMenuRef} className="absolute bottom-6 right-6 z-[1000] flex flex-col items-end gap-2">
         {showCheckMenu && (
@@ -412,18 +412,16 @@ export function Whiteboard({
   )
 }
 
-function HomeTab({ onHome }: { onHome?: () => void }) {
+function HomeButton({ onHome }: { onHome?: () => void }) {
   return (
     <button
       onClick={onHome}
-      className="group absolute left-0 top-1/2 z-[999] flex h-20 -translate-y-1/2 items-center overflow-hidden rounded-r-xl border-y border-r border-neutral-200 bg-white/95 pl-1 pr-2 text-neutral-500 shadow-md backdrop-blur transition-all duration-200 hover:pl-3 hover:pr-4 hover:text-neutral-900"
+      className="absolute left-0 top-0 z-[1000] flex h-10 items-center gap-1 rounded-br-xl border-b border-r border-neutral-200 bg-white/95 px-3 text-sm font-medium text-neutral-700 shadow-sm backdrop-blur transition-colors hover:bg-neutral-100 hover:text-neutral-900"
       aria-label="Home"
       style={{ touchAction: 'manipulation' }}
     >
       <span className="text-base leading-none">‹</span>
-      <span className="ml-0 max-w-0 overflow-hidden whitespace-nowrap text-xs font-medium transition-all duration-200 group-hover:ml-2 group-hover:max-w-[60px]">
-        Home
-      </span>
+      <span>Home</span>
     </button>
   )
 }

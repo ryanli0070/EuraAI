@@ -30,3 +30,8 @@ body.whiteboard-mode #root {
   -webkit-touch-callout: none;
   touch-action: none;
 }
+
+/* Shift tldraw's top-left menu zone right to make room for the Home button. */
+body.whiteboard-mode .tlui-menu-zone {
+  margin-left: 88px;
+}
