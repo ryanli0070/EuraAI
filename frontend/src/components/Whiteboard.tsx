@@ -3,7 +3,7 @@ import { DefaultColorStyle, Editor, react, Tldraw, TldrawUiMenuActionItem, Tldra
 import type { TLDefaultColorStyle } from 'tldraw'
 import 'tldraw/tldraw.css'
 import katex from 'katex'
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { ChevronLeft, Maximize2, Minimize2 } from 'lucide-react'
 import {
   type ChatBox,
   type ChatMessage,
@@ -420,8 +420,8 @@ function HomeButton({ onHome }: { onHome?: () => void }) {
       aria-label="Home"
       style={{ touchAction: 'manipulation' }}
     >
-      <span className="text-base leading-none">‹</span>
-      <span>Home</span>
+      <ChevronLeft className="h-4 w-4" strokeWidth={2.25} />
+      <span className="leading-none">Home</span>
     </button>
   )
 }
