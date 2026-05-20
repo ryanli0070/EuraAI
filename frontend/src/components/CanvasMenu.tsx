@@ -321,18 +321,13 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
       <style>{STYLES}</style>
 
       <header className="bar">
-        <button
-          onClick={() => { setParent(null); setSearch('') }}
-          className="brand"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-          aria-label="Home"
-        >
+        <div className="brand">
           <svg className="mark" viewBox="0 0 40 40" fill="none">
             <path d="M 20 3 C 30 3, 37 11, 37 20 C 37 31, 29 37, 20 37 C 9 37, 3 29, 3 20 C 3 10, 11 3, 20 3 Z" stroke="#18243f" strokeWidth="1.8" strokeLinecap="round" />
             <path d="M 13 12 L 27 12 M 13 20 L 24 20 M 13 28 L 27 28" stroke="#18243f" strokeWidth="2.2" strokeLinecap="round" />
           </svg>
-          <span className="word">Eura<em>AI</em></span>
-        </button>
+          <span className="word">Eura</span>
+        </div>
 
         <div className="search">
           <SearchIcon />
