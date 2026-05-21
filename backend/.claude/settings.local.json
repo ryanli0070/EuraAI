@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ExecutionPolicy *)",
+      "PowerShell(\"venv exists: \" + \\(Test-Path .\\\\.venv\\\\Scripts\\\\Activate.ps1\\); \"venv exists: \" + \\(Test-Path .\\\\venv\\\\Scripts\\\\Activate.ps1\\); \\(Get-ChildItem -Directory\\).Name -join \", \")",
+      "PowerShell(.\\\\venv\\\\Scripts\\\\uvicorn.exe app.main:app --reload)"
+    ]
+  }
+}
