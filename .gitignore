@@ -23,6 +23,7 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+.claude/
 
 # Local DB (Phase 6 debug log)
 *.sqlite
