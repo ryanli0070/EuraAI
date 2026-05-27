@@ -4,13 +4,15 @@
  * What lives here vs. elsewhere:
  *   - canvasStore: the *index* (which canvases/folders exist, names, ordering,
  *     parents, thumbnails) + per-canvas *chat* state.
- *   - tldraw store (drawing data): persisted by tldraw itself via the
- *     `persistenceKey` prop, keyed on canvas id. We never touch tldraw's
- *     IndexedDB directly — that's tldraw's contract.
+ *   - whiteboard persistence (drawing data): one IndexedDB record per canvas,
+ *     handled by `lib/whiteboard/persistence.ts`. Mutations that destroy or
+ *     duplicate a canvas call into that module so the drawing follows the
+ *     index entry.
  *
  * When we add real auth, swap the read/write helpers in this module for
  * fetch() calls; everything that touches state already goes through them.
  */
+import { deleteDoc, loadDoc, saveDoc } from './whiteboard/persistence'
 
 export type CanvasId = string
 export type FolderId = string
@@ -288,6 +290,7 @@ export function deleteCanvas(id: CanvasId): void {
   saveIndex(idx)
   // Best-effort cleanup of associated state.
   try { localStorage.removeItem(CHAT_KEY_PREFIX + id) } catch { /* ignore */ }
+  void deleteDoc(id)
 }
 
 // Recursively delete a folder and everything inside it.
@@ -308,6 +311,7 @@ export function deleteFolder(id: FolderId): void {
   saveIndex(idx)
   for (const c of orphanCanvases) {
     try { localStorage.removeItem(CHAT_KEY_PREFIX + c.id) } catch { /* ignore */ }
+    void deleteDoc(c.id)
   }
 }
 
@@ -317,15 +321,21 @@ export function deleteItem(id: ItemId): void {
   else if (idx.folders.some((f) => f.id === id)) deleteFolder(id)
 }
 
-// Duplicate a canvas's metadata + chat. The tldraw drawing isn't copied — it
-// lives in tldraw's IndexedDB keyed on canvas id, and we don't reach into that
-// store. The user gets a new canvas with the same notes/conversation but a
-// blank drawing surface; document this clearly in the UI tooltip.
-export function duplicateCanvas(id: CanvasId): CanvasMeta | null {
+// Duplicate a canvas's metadata, drawing, and chat. The drawing copy is an
+// IndexedDB read+write, so this is async — but callers can fire-and-forget;
+// the index entry is published only after the drawing is in place, so opening
+// the new canvas never shows a transient blank board.
+export async function duplicateCanvas(id: CanvasId): Promise<CanvasMeta | null> {
   const idx = loadIndex()
   const src = idx.canvases.find((c) => c.id === id)
   if (!src) return null
   const copy = newCanvasMeta(src.parent, nextOrder(idx, src.parent), `${src.name} (copy)`)
+  try {
+    const doc = await loadDoc(src.id)
+    await saveDoc(copy.id, doc)
+  } catch (err) {
+    console.warn('[canvasStore] failed to copy whiteboard doc', err)
+  }
   idx.canvases.push(copy)
   saveIndex(idx)
   // Copy chat payload by raw value.

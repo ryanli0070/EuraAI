@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DefaultColorStyle, Editor, react, Tldraw, TldrawUiMenuActionItem, TldrawUiMenuContextProvider, useCanRedo, useCanUndo } from 'tldraw'
-import type { TLDefaultColorStyle } from 'tldraw'
-import 'tldraw/tldraw.css'
 import katex from 'katex'
-import { ChevronLeft, Maximize2, Minimize2 } from 'lucide-react'
+import {
+  ChevronLeft,
+  Copy,
+  Eraser,
+  Hand,
+  Maximize2,
+  Minimize2,
+  MousePointer2,
+  Pencil,
+  Redo2,
+  Trash2,
+  Undo2,
+} from 'lucide-react'
+import { Canvas, WhiteboardEngine, type EngineState, type ToolId } from '../lib/whiteboard'
 import {
   type ChatBox,
   type ChatMessage,
@@ -74,21 +84,13 @@ function loadInitialChat(canvasId: string): { latex: string; messages: ChatMessa
   return { latex: stored.latex, messages: stored.messages, box }
 }
 
-// Module-level ref so ClearAllQuickActions (defined outside the component tree)
-// can call the board-clear callback without re-creating the component on each render.
-const _clearBoardRef = { current: (() => {}) as () => void }
-
-function ClearAllQuickActions() {
-  const canUndo = useCanUndo()
-  const canRedo = useCanRedo()
-  return (
-    <TldrawUiMenuContextProvider type="small-icons" sourceId="quick-actions">
-      <TldrawUiMenuActionItem actionId="undo" disabled={!canUndo} />
-      <TldrawUiMenuActionItem actionId="redo" disabled={!canRedo} />
-      <TldrawUiMenuActionItem actionId="delete" />
-      <TldrawUiMenuActionItem actionId="duplicate" />
-    </TldrawUiMenuContextProvider>
-  )
+const DEFAULT_ENGINE_STATE: EngineState = {
+  tool: 'draw',
+  color: '#1d1d1d',
+  canUndo: false,
+  canRedo: false,
+  isEmpty: true,
+  hasSelection: false,
 }
 
 export function Whiteboard({
@@ -98,65 +100,36 @@ export function Whiteboard({
   canvasId: string
   onHome?: () => void
 }) {
-  const editorRef = useRef<Editor | null>(null)
+  const engineRef = useRef<WhiteboardEngine | null>(null)
   const checkMenuRef = useRef<HTMLDivElement | null>(null)
   const initial = useMemo(() => loadInitialChat(canvasId), [canvasId])
   const [latex, setLatex] = useState<string>(initial.latex)
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages)
   const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
-
-  // Keep the module-level ref in sync so ClearAllQuickActions can call it
-  _clearBoardRef.current = () => {
-    const editor = editorRef.current
-    if (!editor) return
-    const ids = Array.from(editor.getCurrentPageShapeIds())
-    if (ids.length > 0) {
-      editor.deleteShapes(ids)
-    }
-    setLatex('')
-    setCheckStatus('idle')
-  }
   const [showCheckMenu, setShowCheckMenu] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [box, setBox] = useState<ChatBox>(() => initial.box ?? defaultBox())
   const [showColorPanel, setShowColorPanel] = useState(false)
-  const [activeColor, setActiveColor] = useState<TLDefaultColorStyle>('black')
-  const [currentToolId, setCurrentToolId] = useState<string>('select')
+  const [engineState, setEngineState] = useState<EngineState>(DEFAULT_ENGINE_STATE)
 
-  const handleMount = useCallback((editor: Editor) => {
-    editorRef.current = editor
+  const handleMount = useCallback((engine: WhiteboardEngine) => {
+    engineRef.current = engine
+    setEngineState(engine.getState())
+    engine.subscribe(() => setEngineState(engine.getState()))
+  }, [])
 
-    // Tool changes live in session-scope state; react() tracks them reliably
-    // where store.listen's default filter does not.
-    let prevToolId = ''
-    react('tool watcher', () => {
-      const toolId = editor.getCurrentToolId()
-      const path = editor.getPath()
-      setCurrentToolId(toolId)
-      if (toolId === 'draw' && prevToolId !== 'draw') {
-        setShowColorPanel(true)
-      } else if (toolId !== 'draw') {
-        setShowColorPanel(false)
-      } else if (path === 'draw.drawing') {
-        setShowColorPanel(false)
-      }
-      prevToolId = toolId
-    })
-
-    editor.store.listen(() => {
-      const c = editor.getStyleForNextShape(DefaultColorStyle)
-      if (c) setActiveColor(c)
-    })
-
-    // Re-open panel when pencil clicked while already active
-    const el = editor.getContainer()
-    el.addEventListener('pointerdown', (e) => {
-      const target = e.target as HTMLElement
-      if (target.closest('[data-testid="tools.draw"]') && editor.getCurrentToolId() === 'draw') {
-        setShowColorPanel(true)
-      }
-    }, { capture: true })
+  const handleSelectTool = useCallback((tool: ToolId) => {
+    const engine = engineRef.current
+    if (!engine) return
+    const wasDraw = engine.getState().tool === 'draw'
+    engine.setTool(tool)
+    if (tool === 'draw') {
+      // Toggle the color panel: open on first draw select, re-open on click-while-active.
+      setShowColorPanel((open) => (wasDraw ? !open : true))
+    } else {
+      setShowColorPanel(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -191,16 +164,10 @@ export function Whiteboard({
   }, [showCheckMenu])
 
   const captureCanvas = useCallback(async () => {
-    const editor = editorRef.current
-    if (!editor) return null
-    const shapeIds = Array.from(editor.getCurrentPageShapeIds())
-    if (shapeIds.length === 0) return null
-    const { blob } = await editor.toImage(shapeIds, {
-      format: 'png',
-      background: true,
-      padding: 32,
-      scale: 2,
-    })
+    const engine = engineRef.current
+    if (!engine || engine.isEmpty()) return null
+    const blob = await engine.toImage({ padding: 32, scale: 2, background: true })
+    if (!blob) return null
     const formData = new FormData()
     formData.append('file', blob, 'capture.png')
     return formData
@@ -294,26 +261,22 @@ export function Whiteboard({
   // preview. Best-effort: fall back to clearing the thumbnail if capture fails
   // or the canvas is empty, so a now-empty canvas doesn't keep a stale image.
   const handleHome = useCallback(async () => {
-    const editor = editorRef.current
-    if (editor) {
+    const engine = engineRef.current
+    if (engine) {
       try {
-        const ids = Array.from(editor.getCurrentPageShapeIds())
-        if (ids.length === 0) {
+        if (engine.isEmpty()) {
           setThumbnail(canvasId, undefined)
         } else {
-          const { blob } = await editor.toImage(ids, {
-            format: 'png',
-            background: true,
-            padding: 16,
-            scale: 0.5,
-          })
-          const dataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader()
-            reader.onload = () => resolve(reader.result as string)
-            reader.onerror = () => reject(reader.error)
-            reader.readAsDataURL(blob)
-          })
-          setThumbnail(canvasId, dataUrl)
+          const blob = await engine.toImage({ padding: 16, scale: 0.5, background: true })
+          if (blob) {
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => resolve(reader.result as string)
+              reader.onerror = () => reject(reader.error)
+              reader.readAsDataURL(blob)
+            })
+            setThumbnail(canvasId, dataUrl)
+          }
         }
       } catch (err) {
         console.warn('[EuraAI] thumbnail capture failed', err)
@@ -322,43 +285,40 @@ export function Whiteboard({
     onHome?.()
   }, [canvasId, onHome])
 
+  const handleClear = useCallback(() => {
+    engineRef.current?.clear()
+    setLatex('')
+    setCheckStatus('idle')
+  }, [])
+
   return (
     <div className="fixed inset-0">
-      <Tldraw
-        persistenceKey={`canvas-${canvasId}`}
-        onMount={handleMount}
-        components={{ StylePanel: null, QuickActions: ClearAllQuickActions }}
-        overrides={{
-          actions: (_editor, actions) => ({
-            ...actions,
-            delete: {
-              ...actions['delete'],
-              onSelect() {
-                _clearBoardRef.current()
-              },
-            },
-          }),
-        }}
+      <Canvas canvasId={canvasId} onMount={handleMount} />
+
+      <Toolbar
+        state={engineState}
+        onSelectTool={handleSelectTool}
+        onUndo={() => engineRef.current?.undo()}
+        onRedo={() => engineRef.current?.redo()}
+        onDuplicate={() => engineRef.current?.duplicateSelected()}
+        onClear={handleClear}
       />
 
-      {showColorPanel && currentToolId === 'draw' && (
-        <div className="absolute left-1/2 z-[999] flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur" style={{ bottom: '72px', transform: 'translateX(-50%)' }}>
+      {showColorPanel && engineState.tool === 'draw' && (
+        <div className="absolute left-1/2 top-16 z-[999] flex -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur">
           {COLORS.map((c) => (
             <button
               key={c.value}
               title={c.label}
               onClick={() => {
-                const v = c.value as TLDefaultColorStyle
-                editorRef.current?.setStyleForNextShapes(DefaultColorStyle, v)
-                editorRef.current?.setStyleForSelectedShapes(DefaultColorStyle, v)
-                setActiveColor(v)
+                engineRef.current?.setColor(c.css)
                 setShowColorPanel(false)
               }}
               className="h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 active:scale-95"
               style={{
                 backgroundColor: c.css,
-                borderColor: activeColor === c.value ? '#2563eb' : c.value === 'white' ? '#d1d5db' : 'transparent',
-                boxShadow: activeColor === c.value ? '0 0 0 2px #93c5fd' : 'none',
+                borderColor: engineState.color === c.css ? '#2563eb' : c.css === '#ffffff' ? '#d1d5db' : 'transparent',
+                boxShadow: engineState.color === c.css ? '0 0 0 2px #93c5fd' : 'none',
               }}
             />
           ))}
@@ -408,6 +368,81 @@ export function Whiteboard({
         box={box}
         setBox={setBox}
       />
+    </div>
+  )
+}
+
+function Toolbar({
+  state,
+  onSelectTool,
+  onUndo,
+  onRedo,
+  onDuplicate,
+  onClear,
+}: {
+  state: EngineState
+  onSelectTool: (tool: ToolId) => void
+  onUndo: () => void
+  onRedo: () => void
+  onDuplicate: () => void
+  onClear: () => void
+}) {
+  const tools: { id: ToolId; label: string; Icon: typeof Pencil }[] = [
+    { id: 'select', label: 'Select', Icon: MousePointer2 },
+    { id: 'draw', label: 'Draw', Icon: Pencil },
+    { id: 'eraser', label: 'Eraser', Icon: Eraser },
+    { id: 'hand', label: 'Hand', Icon: Hand },
+  ]
+  return (
+    <div className="absolute left-1/2 top-3 z-[1000] flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
+      {tools.map(({ id, label, Icon }) => {
+        const active = state.tool === id
+        return (
+          <button
+            key={id}
+            title={label}
+            onClick={() => onSelectTool(id)}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+              active ? 'bg-blue-100 text-blue-700' : 'text-neutral-600 hover:bg-neutral-100'
+            }`}
+          >
+            <Icon className="h-4 w-4" strokeWidth={2.25} />
+          </button>
+        )
+      })}
+      <span className="mx-1 h-6 w-px bg-neutral-200" />
+      <button
+        title="Undo"
+        onClick={onUndo}
+        disabled={!state.canUndo}
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        <Undo2 className="h-4 w-4" strokeWidth={2.25} />
+      </button>
+      <button
+        title="Redo"
+        onClick={onRedo}
+        disabled={!state.canRedo}
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        <Redo2 className="h-4 w-4" strokeWidth={2.25} />
+      </button>
+      <button
+        title="Duplicate selection"
+        onClick={onDuplicate}
+        disabled={!state.hasSelection}
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        <Copy className="h-4 w-4" strokeWidth={2.25} />
+      </button>
+      <button
+        title="Clear board"
+        onClick={onClear}
+        disabled={state.isEmpty}
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        <Trash2 className="h-4 w-4" strokeWidth={2.25} />
+      </button>
     </div>
   )
 }
