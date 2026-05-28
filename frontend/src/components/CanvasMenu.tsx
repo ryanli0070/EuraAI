@@ -138,6 +138,12 @@ const STYLES = `
   padding:4px 8px;border-radius:4px;
 }
 .canvas-menu .breadcrumbs button:hover{background:rgba(24,36,63,0.06);color:var(--ink)}
+.canvas-menu .breadcrumbs button.drop-target{
+  background:var(--accent);color:#fff;font-weight:600;
+  transform:scale(1.06);
+  box-shadow:0 2px 8px rgba(45,90,217,0.25);
+  transition:background .12s ease, transform .12s ease;
+}
 .canvas-menu .breadcrumbs .sep{color:var(--pencil)}
 .canvas-menu .breadcrumbs .current{color:var(--ink);font-weight:500;padding:4px 8px}
 
@@ -156,8 +162,36 @@ const STYLES = `
   box-shadow:3px 4px 0 rgba(24,36,63,0.06);
 }
 .canvas-menu .card:hover{transform:translate(-1px,-2px);box-shadow:5px 7px 0 rgba(24,36,63,0.08)}
-.canvas-menu .card.dragging{opacity:0.4}
+.canvas-menu .card.dragging{opacity:0.35;transform:scale(0.97)}
 .canvas-menu .card.drop-target{outline:2px dashed var(--accent);outline-offset:-4px}
+/* Folder-as-drop-target gets a stronger, "opening" treatment — the closed
+   folder SVG is swapped for an open variant by JS, and we layer a soft
+   accent ring + slight lift so it reads as "the folder is receiving". */
+.canvas-menu .card.drop-target.folder-target{
+  outline:none;
+  transform:translate(-1px,-3px) scale(1.02);
+  box-shadow:6px 8px 0 rgba(45,90,217,0.18), 0 0 0 2px var(--accent);
+}
+.canvas-menu .card.drop-target.folder-target .thumb.folder{
+  background:#e6f0ff;
+}
+
+/* Floating drag preview that follows the pointer while dragging. */
+.canvas-menu .drag-ghost{
+  position:fixed;z-index:200;pointer-events:none;
+  background:#fdfaf2;border:1.5px solid var(--ink);border-radius:8px;
+  padding:8px 14px 8px 12px;
+  display:flex;align-items:center;gap:10px;
+  box-shadow:5px 7px 0 rgba(24,36,63,0.18);
+  font-family:var(--ui);font-size:13px;font-weight:600;color:var(--ink);
+  max-width:240px;
+  transform:translate(8px,8px);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.canvas-menu .drag-ghost svg{flex-shrink:0;color:var(--ink-soft)}
+.canvas-menu .drag-ghost .name{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 
 .canvas-menu .thumb{
   height:140px;display:flex;align-items:center;justify-content:center;
@@ -256,6 +290,32 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   const [draggingId, setDraggingId] = useState<ItemId | null>(null)
   const [dropTargetId, setDropTargetId] = useState<ItemId | null>(null)
   const [rootDropActive, setRootDropActive] = useState(false)
+  // Active breadcrumb drop target. 'root' is the sentinel for the
+  // "All canvases" button (maps to null in moveItem); a FolderId is the
+  // sentinel for a parent-folder breadcrumb.
+  const [dropBreadcrumb, setDropBreadcrumb] = useState<FolderId | 'root' | null>(null)
+  const [ghost, setGhost] = useState<{ x: number; y: number; name: string; kind: 'canvas' | 'folder' } | null>(null)
+
+  // Mutable drag state — read by the global pointer listeners. Declared here
+  // (above the items useMemo) so the in-render `xRef.current = x` sync below
+  // is type-legal. Initialized to null/empty; populated as the user drags.
+  type DragRefState = {
+    id: ItemId
+    pointerId: number
+    pointerType: string
+    startX: number
+    startY: number
+    longPressTimer: number | null
+    activated: boolean
+  }
+  const dragRef = useRef<DragRefState | null>(null)
+  const itemsRef = useRef<Item[]>([])
+  const parentRef = useRef<FolderId | null>(null)
+  const renamingIdRef = useRef<ItemId | null>(null)
+  const dropTargetIdRef = useRef<ItemId | null>(null)
+  const rootDropActiveRef = useRef(false)
+  const dropBreadcrumbRef = useRef<FolderId | 'root' | null>(null)
+  const justDraggedRef = useRef(false)
 
   // Re-render whenever the store changes from anywhere.
   useEffect(() => subscribe(() => setVersion((v) => v + 1)), [])
@@ -295,6 +355,12 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
 
   const path = useMemo(() => folderPath(parent), [parent, version])
 
+  // Keep mirrored refs in sync with React state — the global pointer
+  // listeners read these without re-mounting the effect.
+  itemsRef.current = items
+  parentRef.current = parent
+  renamingIdRef.current = renamingId
+
   const handleNewCanvas = useCallback(() => {
     const meta = createCanvas(parent)
     onOpenCanvas(meta.id)
@@ -315,53 +381,189 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   }, [onOpenCanvas])
 
   // ---- drag-and-drop ----
-  const onDragStart = (id: ItemId) => (e: React.DragEvent) => {
-    setDraggingId(id)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', id)
-  }
-  const onDragEnd = () => {
+  // Pointer-events-based drag that works on mouse, touch, and Pencil.
+  //   • mouse:     activates as soon as the pointer moves ~6 px from down.
+  //   • touch/pen: activates after a 350 ms long-press, so taps and vertical
+  //                scroll-from-card-down still work (movement before the
+  //                timer cancels the pending drag).
+  // The runtime state lives in refs so the global pointermove/up handlers
+  // can read it without restaging the effect on every move; useState mirrors
+  // only the pieces that need to drive re-renders.
+  const LONG_PRESS_MS = 350
+  const ACTIVATION_TOLERANCE_PX = 6
+
+  const activateDrag = useCallback((item: Item, x: number, y: number) => {
+    if (!dragRef.current) return
+    dragRef.current.activated = true
+    justDraggedRef.current = true
+    setDraggingId(item.id)
+    setGhost({ x, y, name: item.name, kind: item.kind })
+  }, [])
+
+  const resetDrag = useCallback(() => {
+    const drag = dragRef.current
+    if (drag?.longPressTimer != null) window.clearTimeout(drag.longPressTimer)
+    dragRef.current = null
     setDraggingId(null)
     setDropTargetId(null)
     setRootDropActive(false)
-  }
-  const onDragOverItem = (item: Item) => (e: React.DragEvent) => {
-    if (!draggingId || draggingId === item.id) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    setDropTargetId(item.id)
-  }
-  const onDragLeaveItem = () => setDropTargetId(null)
-  const onDropItem = (item: Item) => (e: React.DragEvent) => {
-    e.preventDefault()
-    if (!draggingId || draggingId === item.id) return
-    if (item.kind === 'folder') {
-      // Drop onto a folder = move into it.
-      moveItem(draggingId, item.id)
-    } else {
-      // Drop onto a canvas = reorder within current parent (insert before).
-      const currentChildren = listChildren(parent).map((x) => x.id)
-      const fromIdx = currentChildren.indexOf(draggingId)
-      const toIdx = currentChildren.indexOf(item.id)
-      if (fromIdx === -1 || toIdx === -1) return
-      const reordered = [...currentChildren]
-      reordered.splice(fromIdx, 1)
-      reordered.splice(toIdx, 0, draggingId)
-      reorderItems(parent, reordered)
+    setDropBreadcrumb(null)
+    setGhost(null)
+    dropTargetIdRef.current = null
+    rootDropActiveRef.current = false
+    dropBreadcrumbRef.current = null
+  }, [])
+
+  const onCardPointerDown = useCallback((item: Item) => (e: React.PointerEvent) => {
+    // Ignore right-click and middle-click. Renaming input owns its own
+    // pointer interactions and shouldn't start a drag.
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (renamingIdRef.current === item.id) return
+
+    dragRef.current = {
+      id: item.id,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      startX: e.clientX,
+      startY: e.clientY,
+      longPressTimer: null,
+      activated: false,
     }
-    onDragEnd()
-  }
-  const onDragOverRoot = (e: React.DragEvent) => {
-    if (!draggingId) return
-    e.preventDefault()
-    setRootDropActive(true)
-  }
-  const onDropToRoot = (e: React.DragEvent) => {
-    e.preventDefault()
-    if (!draggingId) return
-    moveItem(draggingId, null)
-    onDragEnd()
-  }
+    justDraggedRef.current = false
+
+    // Touch/pen → wait for the long-press timer. Mouse activates on movement
+    // (handled in the global pointermove listener), giving snappy desktop UX.
+    if (e.pointerType !== 'mouse') {
+      dragRef.current.longPressTimer = window.setTimeout(() => {
+        if (dragRef.current?.id === item.id && !dragRef.current.activated) {
+          activateDrag(item, dragRef.current.startX, dragRef.current.startY)
+        }
+      }, LONG_PRESS_MS)
+    }
+  }, [activateDrag])
+
+  // Block the synthetic click that follows a drag-completing pointerup, so
+  // we don't accidentally open the source item right after dropping it.
+  const onCardClickGuard = useCallback((e: React.MouseEvent) => {
+    if (justDraggedRef.current) {
+      justDraggedRef.current = false
+      e.stopPropagation()
+      e.preventDefault()
+    }
+  }, [])
+
+  // Global pointermove / pointerup / pointercancel — mounted once.
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag || e.pointerId !== drag.pointerId) return
+
+      const dist = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY)
+
+      if (!drag.activated) {
+        if (drag.pointerType === 'mouse' && dist > ACTIVATION_TOLERANCE_PX) {
+          const item = itemsRef.current.find((i) => i.id === drag.id)
+          if (item) activateDrag(item, e.clientX, e.clientY)
+        } else if (drag.pointerType !== 'mouse' && dist > ACTIVATION_TOLERANCE_PX) {
+          // Pre-activation movement on touch/pen = user is scrolling, not
+          // dragging. Tear down the pending drag and let the OS scroll.
+          resetDrag()
+        }
+        return
+      }
+
+      // --- drag active ---
+      // Suppress the OS-default scroll so the page doesn't move while the
+      // finger drags a card. Once the user lifts, scroll resumes normally.
+      e.preventDefault()
+      setGhost((g) => (g ? { ...g, x: e.clientX, y: e.clientY } : g))
+
+      // Hit-test by asking the document what's under the pointer. Cards,
+      // breadcrumb buttons, and the root-drop zone advertise themselves
+      // with data attributes. Order matters: breadcrumbs sit on top of the
+      // card grid, so they must be checked before falling through to cards.
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      let newDropId: ItemId | null = null
+      let newRootActive = false
+      let newBreadcrumb: FolderId | 'root' | null = null
+      if (el) {
+        const root = el.closest('[data-root-drop]') as HTMLElement | null
+        const breadcrumb = el.closest('[data-breadcrumb-target]') as HTMLElement | null
+        const card = el.closest('[data-card-id]') as HTMLElement | null
+        if (root) {
+          newRootActive = true
+        } else if (breadcrumb) {
+          const raw = breadcrumb.getAttribute('data-breadcrumb-target') ?? ''
+          newBreadcrumb = raw === 'root' ? 'root' : (raw as FolderId)
+        } else if (card) {
+          const id = card.getAttribute('data-card-id') as ItemId
+          if (id !== drag.id) newDropId = id
+        }
+      }
+      if (newDropId !== dropTargetIdRef.current) {
+        dropTargetIdRef.current = newDropId
+        setDropTargetId(newDropId)
+      }
+      if (newRootActive !== rootDropActiveRef.current) {
+        rootDropActiveRef.current = newRootActive
+        setRootDropActive(newRootActive)
+      }
+      if (newBreadcrumb !== dropBreadcrumbRef.current) {
+        dropBreadcrumbRef.current = newBreadcrumb
+        setDropBreadcrumb(newBreadcrumb)
+      }
+    }
+
+    const onUp = (e: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag || e.pointerId !== drag.pointerId) return
+
+      if (drag.activated) {
+        const targetId = dropTargetIdRef.current
+        if (rootDropActiveRef.current) {
+          moveItem(drag.id, null)
+        } else if (dropBreadcrumbRef.current) {
+          // Drop on a breadcrumb — moves the item out to the named ancestor
+          // (root for the "All canvases" sentinel, a FolderId otherwise).
+          const t = dropBreadcrumbRef.current
+          moveItem(drag.id, t === 'root' ? null : t)
+        } else if (targetId) {
+          const target = itemsRef.current.find((i) => i.id === targetId)
+          if (target) {
+            if (target.kind === 'folder') {
+              moveItem(drag.id, target.id)
+            } else {
+              // Reorder within the current parent — insert at the target's
+              // index, matching the previous HTML5-D&D semantics.
+              const children = listChildren(parentRef.current).map((x) => x.id)
+              const fromIdx = children.indexOf(drag.id)
+              const toIdx = children.indexOf(target.id)
+              if (fromIdx !== -1 && toIdx !== -1) {
+                const reordered = [...children]
+                reordered.splice(fromIdx, 1)
+                reordered.splice(toIdx, 0, drag.id)
+                reorderItems(parentRef.current, reordered)
+              }
+            }
+          }
+        }
+      }
+      resetDrag()
+    }
+
+    const onCancel = (e: PointerEvent) => {
+      if (dragRef.current && e.pointerId === dragRef.current.pointerId) resetDrag()
+    }
+
+    document.addEventListener('pointermove', onMove, { passive: false })
+    document.addEventListener('pointerup', onUp)
+    document.addEventListener('pointercancel', onCancel)
+    return () => {
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup', onUp)
+      document.removeEventListener('pointercancel', onCancel)
+    }
+  }, [activateDrag, resetDrag])
 
   return (
     <div className="canvas-menu">
@@ -413,14 +615,26 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
       <main className="container">
         {!search && (
           <nav className="breadcrumbs" aria-label="Breadcrumbs">
-            <button onClick={() => setParent(null)}>All canvases</button>
+            <button
+              onClick={() => setParent(null)}
+              data-breadcrumb-target={parent !== null ? 'root' : undefined}
+              className={dropBreadcrumb === 'root' ? 'drop-target' : ''}
+            >
+              All canvases
+            </button>
             {path.map((f, i) => (
               <span key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span className="sep">/</span>
                 {i === path.length - 1 ? (
                   <span className="current">{f.name}</span>
                 ) : (
-                  <button onClick={() => setParent(f.id)}>{f.name}</button>
+                  <button
+                    onClick={() => setParent(f.id)}
+                    data-breadcrumb-target={f.id}
+                    className={dropBreadcrumb === f.id ? 'drop-target' : ''}
+                  >
+                    {f.name}
+                  </button>
                 )}
               </span>
             ))}
@@ -457,11 +671,8 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
                   duplicateCanvas(item.id)
                   setOpenMenuId(null)
                 }}
-                onDragStart={onDragStart(item.id)}
-                onDragEnd={onDragEnd}
-                onDragOver={onDragOverItem(item)}
-                onDragLeave={onDragLeaveItem}
-                onDrop={onDropItem(item)}
+                onPointerDown={onCardPointerDown(item)}
+                onClickCapture={onCardClickGuard}
               />
             ))}
           </div>
@@ -469,15 +680,24 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
 
         {!search && parent != null && (
           <div
+            data-root-drop=""
             className={`root-drop ${rootDropActive ? 'active' : ''}`}
-            onDragOver={onDragOverRoot}
-            onDragLeave={() => setRootDropActive(false)}
-            onDrop={onDropToRoot}
           >
             ↑ drag here to move to All canvases
           </div>
         )}
       </main>
+
+      {ghost && (
+        <div
+          className="drag-ghost"
+          style={{ left: ghost.x, top: ghost.y }}
+          aria-hidden
+        >
+          {ghost.kind === 'folder' ? <GhostFolderIcon /> : <GhostCanvasIcon />}
+          <span className="name">{ghost.name}</span>
+        </div>
+      )}
 
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
     </div>
@@ -552,11 +772,8 @@ type CardProps = {
   onToggleMenu: () => void
   onDelete: () => void
   onDuplicate: () => void
-  onDragStart: (e: React.DragEvent) => void
-  onDragEnd: () => void
-  onDragOver: (e: React.DragEvent) => void
-  onDragLeave: () => void
-  onDrop: (e: React.DragEvent) => void
+  onPointerDown: (e: React.PointerEvent) => void
+  onClickCapture: (e: React.MouseEvent) => void
 }
 
 function Card({
@@ -573,27 +790,24 @@ function Card({
   onToggleMenu,
   onDelete,
   onDuplicate,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDragLeave,
-  onDrop,
+  onPointerDown,
+  onClickCapture,
 }: CardProps) {
   const isFolder = item.kind === 'folder'
+  // Folder drop-targets get the "opening" treatment — swap the closed folder
+  // SVG for an open variant and let the CSS layer the scale/ring effect.
+  const isFolderTarget = isFolder && isDropTarget
   return (
     <div
-      className={`card ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''}`}
-      draggable={!isRenaming}
+      data-card-id={item.id}
+      className={`card ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''} ${isFolderTarget ? 'folder-target' : ''}`}
+      onPointerDown={onPointerDown}
+      onClickCapture={onClickCapture}
       onClick={() => { if (!isRenaming) onOpen() }}
       onDoubleClick={(e) => { e.stopPropagation(); onRequestRename() }}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
     >
       <div className={`thumb ${isFolder ? 'folder' : ''}`}>
-        {isFolder ? <FolderArt /> : <CanvasThumb canvas={item as CanvasMeta} />}
+        {isFolder ? (isFolderTarget ? <OpenFolderArt /> : <FolderArt />) : <CanvasThumb canvas={item as CanvasMeta} />}
       </div>
       <div className="card-body">
         <div className="card-name">
@@ -678,6 +892,66 @@ function FolderArt() {
         fill="#fdfaf2"
       />
       <path d="M 14 30 L 50 30" stroke="#d9cfb6" strokeWidth="1.5" strokeDasharray="3 4" />
+    </svg>
+  )
+}
+
+/** Open-folder variant — the back panel stays put while the front flap is
+ *  sheared forward, suggesting the folder is receiving the dragged item.
+ *  Used in place of FolderArt when a folder is the active drop target. */
+function OpenFolderArt() {
+  return (
+    <svg viewBox="0 0 64 64" fill="none">
+      {/* back panel of the open folder */}
+      <path
+        d="M 6 22 L 6 52 Q 6 56 10 56 L 54 56 Q 58 56 58 52 L 58 26 Q 58 22 54 22 L 30 22 L 24 16 L 10 16 Q 6 16 6 22 Z"
+        stroke="#18243f"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="#e6f0ff"
+      />
+      {/* sheets peeking out the top of the folder */}
+      <path
+        d="M 14 24 L 14 18 L 46 18 L 46 24"
+        stroke="#2d5ad9"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="#fdfaf2"
+      />
+      {/* front flap, leaned slightly forward */}
+      <path
+        d="M 4 30 L 14 56 L 58 56 L 60 30 Z"
+        stroke="#18243f"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="#fdfaf2"
+      />
+    </svg>
+  )
+}
+
+/** Compact folder icon used inside the floating drag-ghost chip. */
+function GhostFolderIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+      <path
+        d="M 2 6 L 2 16 Q 2 17 3 17 L 17 17 Q 18 17 18 16 L 18 8 Q 18 7 17 7 L 9 7 L 7 5 L 3 5 Q 2 5 2 6 Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  )
+}
+
+/** Compact canvas icon used inside the floating drag-ghost chip. */
+function GhostCanvasIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+      <rect x="3.5" y="2.5" width="13" height="15" rx="1" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M 6.5 7 L 13.5 7 M 6.5 10 L 13.5 10 M 6.5 13 L 11 13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   )
 }
