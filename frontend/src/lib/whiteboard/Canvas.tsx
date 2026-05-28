@@ -19,6 +19,7 @@ export function Canvas({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const eraserCursorRef = useRef<HTMLDivElement | null>(null)
   // Keep the latest onMount without making the effect depend on it.
   const onMountRef = useRef(onMount)
   onMountRef.current = onMount
@@ -35,6 +36,7 @@ export function Canvas({
     void loadDoc(canvasId).then((doc) => {
       if (cancelled) return
       engine = new WhiteboardEngine(canvasEl, canvasId, doc)
+      engine.setEraserCursorEl(eraserCursorRef.current)
       const rect = container.getBoundingClientRect()
       engine.resize(rect.width, rect.height)
 
@@ -57,6 +59,27 @@ export function Canvas({
   return (
     <div ref={containerRef} className="absolute inset-0 bg-white">
       <canvas ref={canvasRef} className="block" />
+      {/* Eraser cursor — a ring that follows the Pencil tip when the eraser
+          tool is active. Lives in the DOM (not on the canvas) so moving it
+          doesn't trigger a canvas re-render. Hidden by default; the engine
+          toggles `display` and sets `transform` directly on this element. */}
+      <div
+        ref={eraserCursorRef}
+        aria-hidden
+        className="pointer-events-none absolute"
+        style={{
+          top: 0,
+          left: 0,
+          width: 20,
+          height: 20,
+          borderRadius: '50%',
+          border: '1.5px solid rgba(0, 0, 0, 0.45)',
+          backgroundColor: 'rgba(255, 255, 255, 0.15)',
+          boxShadow: '0 0 0 0.5px rgba(255, 255, 255, 0.7) inset',
+          display: 'none',
+          willChange: 'transform',
+        }}
+      />
     </div>
   )
 }

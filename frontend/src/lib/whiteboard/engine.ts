@@ -22,7 +22,7 @@ import type { Camera, EngineState, Stroke, ToolId, WhiteboardDoc } from './types
 const MIN_ZOOM = 0.1
 const MAX_ZOOM = 8
 const DEFAULT_COLOR = '#1d1d1d'
-const DEFAULT_SIZE = 6
+const DEFAULT_SIZE = 4
 const SAVE_DEBOUNCE_MS = 600
 
 function uid(): string {
@@ -72,6 +72,12 @@ export class WhiteboardEngine {
   // progress are rejected entirely. Resets on page reload.
   private penMode = false
 
+  // DOM overlay that visualizes the eraser's hit radius. Only the Pencil tip
+  // shows it (per Goodnotes-style UX — touch is for panning, not erasing),
+  // and only while the eraser tool is active. The element is owned by the
+  // React layer; the engine just toggles its style.
+  private eraserCursorEl: HTMLElement | null = null
+
   private pathCache = new Map<string, { len: number; path: Path2D }>()
   private listeners = new Set<Listener>()
   private rafId = 0
@@ -93,6 +99,7 @@ export class WhiteboardEngine {
     canvas.addEventListener('pointermove', this.onPointerMove)
     canvas.addEventListener('pointerup', this.onPointerUp)
     canvas.addEventListener('pointercancel', this.onPointerUp)
+    canvas.addEventListener('pointerleave', this.onPointerLeave)
     canvas.addEventListener('wheel', this.onWheel, { passive: false })
     // iPadOS Scribble (Pencil → text recognition) silently swallows Pencil
     // events mid-stroke unless we preventDefault the underlying touchmove.
@@ -322,7 +329,52 @@ export class WhiteboardEngine {
     e.preventDefault()
   }
 
+  // ---------------------------------------------------------------------
+  // Eraser cursor — DOM overlay that follows the Pencil tip in eraser mode
+  // ---------------------------------------------------------------------
+
+  /** Wire the React-owned cursor element into the engine. Pass `null` to
+   * detach. The engine mutates this element's `style` directly to avoid
+   * round-tripping every pointer move through React. */
+  setEraserCursorEl(el: HTMLElement | null): void {
+    this.eraserCursorEl = el
+    if (!el) return
+    if (this.tool !== 'eraser') this.hideEraserCursor()
+  }
+
+  /** Position + show the eraser cursor if (a) the eraser tool is active and
+   * (b) the event came from an Apple Pencil. Hide it otherwise. Coordinates
+   * are container-relative, matching the canvas element's positioned box. */
+  private updateEraserCursor(e: PointerEvent): void {
+    const el = this.eraserCursorEl
+    if (!el) return
+    if (this.tool !== 'eraser' || e.pointerType !== 'pen') {
+      this.hideEraserCursor()
+      return
+    }
+    const { x, y } = this.screenOf(e.clientX, e.clientY)
+    el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`
+    if (el.style.display !== 'block') el.style.display = 'block'
+  }
+
+  private hideEraserCursor(): void {
+    const el = this.eraserCursorEl
+    if (el && el.style.display !== 'none') el.style.display = 'none'
+  }
+
+  /** Fires when any pointer leaves the canvas rect — including Pencil hover
+   * pulling away on iPadOS 16.4+. Drop the cursor so it doesn't linger at
+   * the last hover position once the Pencil is no longer near the screen. */
+  private onPointerLeave = (e: PointerEvent): void => {
+    if (e.pointerType === 'pen') this.hideEraserCursor()
+  }
+
   private onPointerMove = (e: PointerEvent): void => {
+    // Update the eraser cursor regardless of whether this pointer is "active"
+    // (in the `pointers` map). On iPadOS 16.4+ the Pencil 2 / Pro fires hover
+    // pointermoves with no preceding pointerdown — we still want the cursor
+    // to track the tip during hover.
+    this.updateEraserCursor(e)
     if (!this.pointers.has(e.pointerId)) return
     const screen = this.screenOf(e.clientX, e.clientY)
     this.pointers.set(e.pointerId, screen)
@@ -620,6 +672,7 @@ export class WhiteboardEngine {
     if (this.tool === tool) return
     this.tool = tool
     if (tool !== 'select') this.selection.clear()
+    if (tool !== 'eraser') this.hideEraserCursor()
     this.emit()
     this.requestRender()
   }
@@ -700,6 +753,7 @@ export class WhiteboardEngine {
     this.canvas.removeEventListener('pointermove', this.onPointerMove)
     this.canvas.removeEventListener('pointerup', this.onPointerUp)
     this.canvas.removeEventListener('pointercancel', this.onPointerUp)
+    this.canvas.removeEventListener('pointerleave', this.onPointerLeave)
     this.canvas.removeEventListener('wheel', this.onWheel)
     this.canvas.removeEventListener('touchmove', this.onTouchMove)
     window.removeEventListener('keydown', this.onKeyDown)

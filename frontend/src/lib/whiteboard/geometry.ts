@@ -8,19 +8,30 @@ import { getStroke } from 'perfect-freehand'
 import type { Bounds, Stroke } from './types'
 
 /**
- * perfect-freehand tuning. These mirror tldraw's `draw` shape defaults closely
- * enough that existing users won't notice a change in line feel.
+ * perfect-freehand tuning — Goodnotes Ball Pen feel: constant width with
+ * rounded caps. Tapering/pressure variation is deliberately disabled because
+ * the variable-width "fountain pen" look reads as messy texture on a math
+ * whiteboard. To revert to a Fountain-Pen feel later, set `thinning: 0.6`,
+ * `simulatePressure: !stroke.pen`, and drop the `start`/`end` blocks.
  */
 function freehandOptions(stroke: Stroke, isComplete: boolean) {
   return {
     size: stroke.size,
-    thinning: 0.6,
-    smoothing: 0.5,
-    streamline: 0.5,
-    // Mouse input has no real pressure (always 0.5) — let the library fake
-    // taper from velocity. A real stylus carries pressure, so trust it.
-    simulatePressure: !stroke.pen,
+    thinning: 0,
+    // Slightly above tldraw's 0.5 defaults — the extra smoothing/streamline
+    // is the "stabilization" pass reviewers credit for Goodnotes' buttery
+    // feel. Higher values trade tip responsiveness for smoother curves.
+    smoothing: 0.62,
+    streamline: 0.55,
+    // Constant width is incompatible with pressure variation; disable for
+    // every input, stylus included.
+    simulatePressure: false,
     last: isComplete,
+    // Rounded endpoints (the "ball" of a ball pen). cap:true rounds both
+    // ends; taper:0 keeps those caps at the full pen width instead of
+    // pulling them to a point.
+    start: { cap: true, taper: 0 },
+    end: { cap: true, taper: 0 },
   }
 }
 
