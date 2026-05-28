@@ -17,6 +17,10 @@ sympy>=1.13.0
 latex2sympy2_extended>=1.0.0
 slowapi>=0.1.9
 
+# Supabase JWT validation (HS256 by default; the [crypto] extra also covers
+# asymmetric algorithms if/when the project enables JWT signing keys).
+pyjwt[crypto]>=2.8.0
+
 # --- Pinned transitives (resolved by pip during initial install) ---
 annotated-types==0.7.0
 anyio==4.13.0

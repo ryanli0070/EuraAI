@@ -17,6 +17,7 @@ Install these once:
 - **Node.js 20+** and **npm 10+** — `node --version` / `npm --version`
 - **Git** — `git --version`
 - An **OpenAI API key** (the backend will refuse to start without one).
+- A **Supabase project**. The frontend uses it for auth + data; the backend uses it to validate access tokens. Both will refuse to start without it configured.
 
 ---
 
@@ -68,19 +69,20 @@ pip install -r requirements.txt
 
 ### 3c. Configure environment variables
 
-Create `backend/.env` with at least your OpenAI key:
+Create `backend/.env` (or a `.env` at the repo root — both are loaded) with:
 
 ```dotenv
 OPENAI_API_KEY=sk-...your-key-here...
+SUPABASE_JWT_SECRET=...from Supabase dashboard, see below...
 
 # Optional overrides (defaults shown):
 # OPENAI_MODEL=gpt-4o-2024-08-06
 # MAX_IMAGE_WIDTH=1600
 # MAX_UPLOAD_BYTES=10485760
-# CORS_ORIGINS=http://localhost:5173
+# CORS_ORIGINS=http://localhost:5173,capacitor://localhost,https://localhost
 ```
 
-`app/config.py` loads this file at startup and raises immediately if `OPENAI_API_KEY` is missing — so a misconfigured backend fails fast instead of returning 500s on the first request.
+`SUPABASE_JWT_SECRET` comes from your Supabase dashboard: **Project Settings → API → JWT Secret**. The backend uses it to verify the access token on every protected request (HS256). Without it, `app/config.py` fails fast at startup.
 
 ### 3d. Run the backend
 
@@ -112,14 +114,21 @@ cd frontend
 npm install
 ```
 
-### 4b. (Optional) Configure the API base URL
-
-Only needed if the backend is not on `http://localhost:8000`:
+### 4b. Configure Supabase env vars
 
 ```bash
 cp .env.local.example .env.local
-# then edit .env.local and set VITE_API_BASE_URL
 ```
+
+Then fill in `frontend/.env.local`:
+
+```dotenv
+VITE_SUPABASE_URL=https://<your-project>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+# VITE_API_BASE_URL=http://localhost:8000  # only if your backend lives elsewhere
+```
+
+Get the URL and **publishable** API key (`sb_publishable_…`, not the legacy anon JWT) from the Supabase dashboard: **Project Settings → API**. The dev server refuses to start without these.
 
 ### 4c. Run the dev server
 
@@ -160,6 +169,8 @@ Then open `http://localhost:5173`.
 ## 6. Troubleshooting
 
 - **`RuntimeError: Required env var OPENAI_API_KEY is not set`** — create `backend/.env` (see step 3c) and restart uvicorn.
+- **`RuntimeError: Required env var SUPABASE_JWT_SECRET is not set`** — add `SUPABASE_JWT_SECRET` to `backend/.env` from the Supabase dashboard (Settings → API → JWT Secret).
+- **API requests return 401 `Missing Bearer token`** — the user isn't signed in, or the Supabase session expired. Sign in via the auth screen; the frontend attaches the access token automatically.
 - **`ModuleNotFoundError` on backend start** — the venv isn't activated, or `pip install -r requirements.txt` didn't finish. Re-activate and re-install.
 - **`Activate.ps1 cannot be loaded` in PowerShell** — run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 - **Frontend loads but API calls fail (CORS or `ERR_CONNECTION_REFUSED`)** — confirm the backend is running on `:8000` and that `VITE_API_BASE_URL` (if set) points at it.

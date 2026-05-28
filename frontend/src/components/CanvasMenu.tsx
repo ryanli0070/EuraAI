@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import {
+  type CanvasIndex,
   type CanvasMeta,
   type Folder,
   type FolderId,
@@ -10,6 +11,7 @@ import {
   deleteItem,
   duplicateCanvas,
   folderPath,
+  getThumbnailUrl,
   listChildren,
   loadIndex,
   moveItem,
@@ -18,6 +20,7 @@ import {
   searchAll,
   subscribe,
 } from '../lib/canvasStore'
+import { signOut } from '../lib/auth'
 
 const STYLES = `
 .canvas-menu{
@@ -246,8 +249,11 @@ type CanvasMenuProps = {
   onOpenCanvas: (id: string) => void
 }
 
+const EMPTY_INDEX: CanvasIndex = { version: 2, canvases: [], folders: [] }
+
 export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
-  const [version, setVersion] = useState(0)
+  const [index, setIndex] = useState<CanvasIndex>(EMPTY_INDEX)
+  const [indexLoaded, setIndexLoaded] = useState(false)
   const [parent, setParent] = useState<FolderId | null>(null)
   const [search, setSearch] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -257,8 +263,22 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   const [dropTargetId, setDropTargetId] = useState<ItemId | null>(null)
   const [rootDropActive, setRootDropActive] = useState(false)
 
-  // Re-render whenever the store changes from anywhere.
-  useEffect(() => subscribe(() => setVersion((v) => v + 1)), [])
+  // Load the index on mount and whenever the store notifies a change.
+  useEffect(() => {
+    let cancelled = false
+    const reload = async () => {
+      const next = await loadIndex()
+      if (cancelled) return
+      setIndex(next)
+      setIndexLoaded(true)
+    }
+    void reload()
+    const unsub = subscribe(() => void reload())
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
 
   // Reset transient UI state when navigating between folders.
   useEffect(() => {
@@ -268,13 +288,11 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
     setDropTargetId(null)
   }, [parent])
 
-  // If the current parent folder gets deleted, fall back to root so we don't
-  // render an empty view forever. Re-checked on every store update.
+  // If the current parent folder gets deleted, fall back to root.
   useEffect(() => {
     if (parent == null) return
-    const idx = loadIndex()
-    if (!idx.folders.some((f) => f.id === parent)) setParent(null)
-  }, [parent, version])
+    if (!index.folders.some((f) => f.id === parent)) setParent(null)
+  }, [parent, index])
 
   // Close any open kebab menu when clicking outside the cards.
   useEffect(() => {
@@ -289,20 +307,19 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   }, [openMenuId])
 
   const items: Item[] = useMemo(() => {
-    return search.trim() ? searchAll(search) : listChildren(parent)
-    // version included so this recomputes after any store mutation.
-  }, [parent, search, version])
+    return search.trim() ? searchAll(index, search) : listChildren(index, parent)
+  }, [parent, search, index])
 
-  const path = useMemo(() => folderPath(parent), [parent, version])
+  const path = useMemo(() => folderPath(index, parent), [parent, index])
 
-  const handleNewCanvas = useCallback(() => {
-    const meta = createCanvas(parent)
-    onOpenCanvas(meta.id)
+  const handleNewCanvas = useCallback(async () => {
+    const meta = await createCanvas(parent)
+    if (meta) onOpenCanvas(meta.id)
   }, [parent, onOpenCanvas])
 
-  const handleNewFolder = useCallback(() => {
-    const f = createFolder(parent)
-    setRenamingId(f.id)
+  const handleNewFolder = useCallback(async () => {
+    const f = await createFolder(parent)
+    if (f) setRenamingId(f.id)
   }, [parent])
 
   const handleOpen = useCallback((item: Item) => {
@@ -336,18 +353,19 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
     e.preventDefault()
     if (!draggingId || draggingId === item.id) return
     if (item.kind === 'folder') {
-      // Drop onto a folder = move into it.
-      moveItem(draggingId, item.id)
+      void moveItem(draggingId, item.id)
     } else {
-      // Drop onto a canvas = reorder within current parent (insert before).
-      const currentChildren = listChildren(parent).map((x) => x.id)
+      const currentChildren = listChildren(index, parent).map((x) => x.id)
       const fromIdx = currentChildren.indexOf(draggingId)
       const toIdx = currentChildren.indexOf(item.id)
-      if (fromIdx === -1 || toIdx === -1) return
+      if (fromIdx === -1 || toIdx === -1) {
+        onDragEnd()
+        return
+      }
       const reordered = [...currentChildren]
       reordered.splice(fromIdx, 1)
       reordered.splice(toIdx, 0, draggingId)
-      reorderItems(parent, reordered)
+      void reorderItems(parent, reordered)
     }
     onDragEnd()
   }
@@ -359,7 +377,7 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   const onDropToRoot = (e: React.DragEvent) => {
     e.preventDefault()
     if (!draggingId) return
-    moveItem(draggingId, null)
+    void moveItem(draggingId, null)
     onDragEnd()
   }
 
@@ -401,10 +419,10 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
         </div>
 
         <div className="actions">
-          <button className="btn ghost" onClick={handleNewFolder}>
+          <button className="btn ghost" onClick={() => void handleNewFolder()}>
             <FolderPlusIcon /> New folder
           </button>
-          <button className="btn" onClick={handleNewCanvas}>
+          <button className="btn" onClick={() => void handleNewCanvas()}>
             <PlusIcon /> New canvas
           </button>
         </div>
@@ -427,14 +445,15 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
           </nav>
         )}
 
-        {items.length === 0 ? (
-          <EmptyState searching={!!search.trim()} onNewCanvas={handleNewCanvas} />
+        {!indexLoaded ? null : items.length === 0 ? (
+          <EmptyState searching={!!search.trim()} onNewCanvas={() => void handleNewCanvas()} />
         ) : (
           <div className="grid">
             {items.map((item) => (
               <Card
                 key={item.id}
                 item={item}
+                index={index}
                 isDragging={draggingId === item.id}
                 isDropTarget={dropTargetId === item.id && draggingId !== item.id}
                 isRenaming={renamingId === item.id}
@@ -442,19 +461,19 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
                 showLocation={!!search}
                 onOpen={() => handleOpen(item)}
                 onRequestRename={() => setRenamingId(item.id)}
-                onCommitRename={(name) => { renameItem(item.id, name); setRenamingId(null) }}
+                onCommitRename={(name) => { void renameItem(item.id, name); setRenamingId(null) }}
                 onCancelRename={() => setRenamingId(null)}
                 onToggleMenu={() => setOpenMenuId((cur) => cur === item.id ? null : item.id)}
                 onDelete={() => {
                   const label = item.kind === 'folder' ? `the folder "${item.name}" and everything inside it` : `"${item.name}"`
                   if (confirm(`Delete ${label}? This can't be undone.`)) {
-                    deleteItem(item.id)
+                    void deleteItem(item.id)
                     setOpenMenuId(null)
                   }
                 }}
                 onDuplicate={() => {
                   if (item.kind !== 'canvas') return
-                  duplicateCanvas(item.id)
+                  void duplicateCanvas(item.id)
                   setOpenMenuId(null)
                 }}
                 onDragStart={onDragStart(item.id)}
@@ -479,20 +498,24 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
         )}
       </main>
 
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onSignOut={() => { setSidebarOpen(false); void signOut() }}
+      />
     </div>
   )
 }
 
-const SIDEBAR_ITEMS = [
-  { label: 'Profile', icon: ProfileIcon },
-  { label: 'Settings', icon: SettingsIcon },
-  { label: 'Payments', icon: PaymentsIcon },
-  { label: 'Help & Support', icon: HelpIcon },
-  { label: 'Sign Out', icon: SignOutIcon },
-]
-
-function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+function Sidebar({
+  open,
+  onClose,
+  onSignOut,
+}: {
+  open: boolean
+  onClose: () => void
+  onSignOut: () => void
+}) {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
@@ -501,6 +524,14 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [open, onClose])
+
+  const items: { label: string; icon: ComponentType; onClick?: () => void }[] = [
+    { label: 'Profile', icon: ProfileIcon },
+    { label: 'Settings', icon: SettingsIcon },
+    { label: 'Payments', icon: PaymentsIcon },
+    { label: 'Help & Support', icon: HelpIcon },
+    { label: 'Sign Out', icon: SignOutIcon, onClick: onSignOut },
+  ]
 
   return (
     <>
@@ -522,8 +553,13 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav className="sidebar-nav">
-          {SIDEBAR_ITEMS.map((item) => (
-            <button key={item.label} type="button" className="sidebar-item">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className="sidebar-item"
+              onClick={item.onClick}
+            >
               <span className="sidebar-item-icon"><item.icon /></span>
               <span>{item.label}</span>
             </button>
@@ -540,6 +576,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 type CardProps = {
   item: Item
+  index: CanvasIndex
   isDragging: boolean
   isDropTarget: boolean
   isRenaming: boolean
@@ -561,6 +598,7 @@ type CardProps = {
 
 function Card({
   item,
+  index,
   isDragging,
   isDropTarget,
   isRenaming,
@@ -605,9 +643,9 @@ function Card({
         </div>
         <div className="card-meta">
           {showLocation
-            ? locationLabel(item)
+            ? locationLabel(index, item)
             : isFolder
-              ? folderChildLabel(item as Folder)
+              ? folderChildLabel(index, item as Folder)
               : modifiedLabel(item.modifiedAt)}
         </div>
       </div>
@@ -660,9 +698,23 @@ function RenameInput({
 }
 
 function CanvasThumb({ canvas }: { canvas: CanvasMeta }) {
-  if (canvas.thumbnail) {
-    return <img src={canvas.thumbnail} alt="" />
-  }
+  // Track which thumbnail_path the resolved URL belongs to so navigating to
+  // a canvas without a thumbnail doesn't show a stale image from a previous one.
+  const [resolved, setResolved] = useState<{ path: string; url: string | null }>(
+    { path: '', url: null },
+  )
+  const path = canvas.thumbnailPath ?? ''
+  useEffect(() => {
+    if (!path) return
+    let cancelled = false
+    void getThumbnailUrl(canvas).then((url) => {
+      if (!cancelled) setResolved({ path, url })
+    })
+    return () => { cancelled = true }
+  }, [canvas, path])
+
+  const url = resolved.path === path ? resolved.url : null
+  if (url) return <img src={url} alt="" />
   return <span className="empty">empty page</span>
 }
 
@@ -718,8 +770,8 @@ function modifiedLabel(ts: number): string {
   return new Date(ts).toLocaleDateString()
 }
 
-function folderChildLabel(folder: Folder): string {
-  const kids = listChildren(folder.id)
+function folderChildLabel(index: CanvasIndex, folder: Folder): string {
+  const kids = listChildren(index, folder.id)
   if (kids.length === 0) return 'empty folder'
   const c = kids.filter((k) => k.kind === 'canvas').length
   const f = kids.filter((k) => k.kind === 'folder').length
@@ -729,8 +781,8 @@ function folderChildLabel(folder: Folder): string {
   return parts.join(' · ')
 }
 
-function locationLabel(item: Item): string {
-  const path = folderPath(item.parent)
+function locationLabel(index: CanvasIndex, item: Item): string {
+  const path = folderPath(index, item.parent)
   if (path.length === 0) return 'in All canvases'
   return 'in ' + path.map((p) => p.name).join(' / ')
 }

@@ -1,0 +1,196 @@
+import { useState, type FormEvent } from 'react'
+import { resetPassword, signIn, signUp } from '../lib/auth'
+
+type Mode = 'signin' | 'signup' | 'reset'
+
+const STYLES = `
+.auth-screen{
+  --paper:#f6f1e6;
+  --ink:#18243f;
+  --ink-soft:#3a4a69;
+  --pencil:#6b7284;
+  --rule:#d9cfb6;
+  --red:#b4453d;
+  --accent:#2d5ad9;
+  --sans:'Fraunces','Iowan Old Style',Georgia,serif;
+  --ui:'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  background:var(--paper);
+  color:var(--ink);
+  min-height:100vh;
+  font-family:var(--ui);
+  display:flex;align-items:center;justify-content:center;padding:24px;
+  position:relative;
+}
+.auth-screen::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    radial-gradient(rgba(24,36,63,0.035) 1px, transparent 1.2px),
+    radial-gradient(rgba(24,36,63,0.02) 1px, transparent 1.2px);
+  background-size:3px 3px,7px 7px;
+  background-position:0 0,1px 2px;
+  mix-blend-mode:multiply;
+}
+.auth-screen .card{
+  position:relative;z-index:1;
+  width:100%;max-width:380px;
+  background:#fdfaf2;border:1.5px solid var(--ink);border-radius:12px;
+  padding:32px 28px;
+  box-shadow:4px 6px 0 rgba(24,36,63,0.08);
+}
+.auth-screen h1{
+  font-family:var(--sans);font-weight:500;font-size:28px;letter-spacing:-0.01em;
+  margin:0 0 6px;color:var(--ink);
+}
+.auth-screen .sub{
+  font-size:14px;color:var(--ink-soft);margin:0 0 22px;
+}
+.auth-screen form{display:flex;flex-direction:column;gap:12px}
+.auth-screen label{
+  display:flex;flex-direction:column;gap:6px;
+  font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:var(--pencil);
+}
+.auth-screen input{
+  border:1.5px solid var(--ink);border-radius:8px;background:#fff;
+  padding:10px 12px;font:inherit;color:var(--ink);outline:none;
+  font-size:14px;letter-spacing:normal;text-transform:none;
+}
+.auth-screen input:focus{box-shadow:0 0 0 3px rgba(45,90,217,0.18)}
+.auth-screen .submit{
+  margin-top:6px;
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  cursor:pointer;font-family:var(--ui);font-weight:600;font-size:14px;
+  padding:11px 16px;border-radius:999px;border:1.5px solid var(--ink);
+  background:var(--ink);color:var(--paper);
+  transition:transform .15s ease, opacity .2s ease;
+}
+.auth-screen .submit:hover:not(:disabled){transform:translateY(-1px)}
+.auth-screen .submit:disabled{opacity:0.6;cursor:not-allowed}
+.auth-screen .error{
+  background:rgba(180,69,61,0.08);color:var(--red);
+  border:1px solid rgba(180,69,61,0.3);border-radius:8px;
+  padding:8px 12px;font-size:13px;
+}
+.auth-screen .notice{
+  background:rgba(45,90,217,0.06);color:var(--accent);
+  border:1px solid rgba(45,90,217,0.25);border-radius:8px;
+  padding:8px 12px;font-size:13px;
+}
+.auth-screen .links{
+  margin-top:18px;display:flex;justify-content:space-between;font-size:13px;
+}
+.auth-screen .links button{
+  background:none;border:none;cursor:pointer;color:var(--accent);
+  font:inherit;padding:0;text-decoration:underline;
+}
+.auth-screen .brand{
+  text-align:center;margin-bottom:24px;
+  font-family:var(--sans);font-weight:500;font-size:22px;letter-spacing:-0.01em;
+}
+`
+
+export function AuthScreen() {
+  const [mode, setMode] = useState<Mode>('signin')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const reset = () => {
+    setError(null)
+    setNotice(null)
+  }
+
+  const switchMode = (next: Mode) => {
+    reset()
+    setMode(next)
+  }
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (submitting) return
+    reset()
+    setSubmitting(true)
+    try {
+      if (mode === 'signin') {
+        const err = await signIn(email.trim(), password)
+        if (err) setError(err)
+        // success: useSession will update; component unmounts.
+      } else if (mode === 'signup') {
+        const err = await signUp(email.trim(), password)
+        if (err) setError(err)
+        else setNotice('Check your email to confirm your account.')
+      } else {
+        const err = await resetPassword(email.trim())
+        if (err) setError(err)
+        else setNotice("If that email is registered, we've sent a reset link.")
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const title = mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Reset password'
+  const submitLabel =
+    mode === 'signin' ? (submitting ? 'Signing in…' : 'Sign in')
+    : mode === 'signup' ? (submitting ? 'Creating…' : 'Create account')
+    : (submitting ? 'Sending…' : 'Send reset email')
+
+  return (
+    <div className="auth-screen">
+      <style>{STYLES}</style>
+      <div className="card">
+        <div className="brand">Eura</div>
+        <h1>{title}</h1>
+        <p className="sub">
+          {mode === 'signin' && 'Welcome back.'}
+          {mode === 'signup' && 'A canvas, a calculator, and a tutor.'}
+          {mode === 'reset' && "We'll email you a link to set a new password."}
+        </p>
+
+        {error && <div className="error" role="alert">{error}</div>}
+        {notice && <div className="notice">{notice}</div>}
+
+        <form onSubmit={onSubmit}>
+          <label>
+            Email
+            <input
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          {mode !== 'reset' && (
+            <label>
+              Password
+              <input
+                type="password"
+                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+          )}
+          <button className="submit" type="submit" disabled={submitting}>
+            {submitLabel}
+          </button>
+        </form>
+
+        <div className="links">
+          {mode === 'signin' ? (
+            <>
+              <button type="button" onClick={() => switchMode('signup')}>Create an account</button>
+              <button type="button" onClick={() => switchMode('reset')}>Forgot password?</button>
+            </>
+          ) : (
+            <button type="button" onClick={() => switchMode('signin')}>Back to sign in</button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

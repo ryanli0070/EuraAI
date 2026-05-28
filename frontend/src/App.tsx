@@ -1,10 +1,19 @@
 import { useCallback, useRef, useState } from 'react'
+import { AuthScreen } from './components/AuthScreen'
 import { CanvasMenu } from './components/CanvasMenu'
 import { Whiteboard } from './components/Whiteboard'
+import { useSession } from './lib/auth'
 
 type SlideDir = 'forward' | 'backward' | null
 
 function App() {
+  const { session, loading } = useSession()
+  if (loading) return null
+  if (!session) return <AuthScreen />
+  return <AppShell />
+}
+
+function AppShell() {
   // null = menu is the active surface; string = open that canvas.
   const [activeId, setActiveId] = useState<string | null>(null)
   const [slideDir, setSlideDir] = useState<SlideDir>(null)
