@@ -66,12 +66,6 @@ export class WhiteboardEngine {
   private pointers = new Map<number, { x: number; y: number }>()
   private gesture: { midX: number; midY: number; dist: number } | null = null
 
-  // Goodnotes-style pen mode: the first time we see an Apple Pencil event in
-  // this session, latch into pen mode. From then on, fingers only pan/zoom —
-  // they never draw — and palm contacts that land while a Pencil stroke is in
-  // progress are rejected entirely. Resets on page reload.
-  private penMode = false
-
   // DOM overlay that visualizes the eraser's hit radius. Only the Pencil tip
   // shows it (per Goodnotes-style UX — touch is for panning, not erasing),
   // and only while the eraser tool is active. The element is owned by the
@@ -251,18 +245,18 @@ export class WhiteboardEngine {
   // ---------------------------------------------------------------------
 
   private onPointerDown = (e: PointerEvent): void => {
-    // Sticky pen-mode latch. Once the user ever uses the Pencil, fingers
-    // become pan/zoom only for the rest of the session — same UX as Goodnotes
-    // and Excalidraw. iPad Safari does not flag touches as "palm", so the
-    // only reliable separation is by pointerType.
-    if (e.pointerType === 'pen') this.penMode = true
+    // Hard rule: only the Pencil (and desktop mouse) draws. A touch pointer
+    // — finger or palm — never enters the drawing pipeline; it can only pan
+    // or pinch-zoom. This routing is fixed from the moment the whiteboard
+    // mounts, so the very first finger contact after a fresh page load pans
+    // the canvas instead of starting a stray stroke.
 
     // Palm rejection: while a Pencil stroke is in progress, ignore any new
-    // touch pointers entirely. This is the core fix — without it, the palm
-    // landing on the screen would push pointers.size to 2, cancel the active
-    // stroke, and start a phantom pinch-zoom gesture. By bailing here, the
-    // touch is never captured and never enters the gesture/pan pipeline.
-    if (this.penMode && e.pointerType === 'touch' && this.drawing) {
+    // touch pointers entirely. Without this, the palm landing on the screen
+    // would push pointers.size to 2, cancel the active stroke, and start a
+    // phantom pinch-zoom gesture. By bailing here, the touch is never
+    // captured and never enters the gesture/pan pipeline.
+    if (e.pointerType === 'touch' && this.drawing) {
       return
     }
 
@@ -298,10 +292,10 @@ export class WhiteboardEngine {
       return
     }
 
-    // In pen mode, single-finger touch always pans — fingers never draw,
-    // regardless of the active tool. This is Goodnotes-style: tool selection
-    // applies to the Pencil; the finger is reserved for scrolling the board.
-    if (this.penMode && e.pointerType === 'touch') {
+    // Single-finger touch always pans — fingers never draw, regardless of
+    // the active tool. Goodnotes-style: tool selection applies to the
+    // Pencil; the finger is reserved for scrolling the board.
+    if (e.pointerType === 'touch') {
       this.panFrom = { x: screen.x, y: screen.y, camX: this.camera.x, camY: this.camera.y }
       return
     }
