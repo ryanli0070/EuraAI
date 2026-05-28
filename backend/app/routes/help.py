@@ -8,6 +8,7 @@ from app.limiter import limiter
 from app.routes.uploads import read_with_limit
 from app.schemas import HelpResponse
 from app.services import help as help_service
+from app.services import verify
 from app.storage import log_store
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,16 @@ async def help_work(request: Request, file: UploadFile = File(...)) -> HelpRespo
                              status=resp.status, step_index=0)
             return resp
 
-        if analysis.all_correct:
+        # Parity with hint mode (/check): if SymPy parsed every step and
+        # confirmed each transition is valid, trust it unconditionally and
+        # don't let the LLM explanation override correct work. This keeps the
+        # two modes' correctness verdicts in sync — anything hint mode calls
+        # correct, help mode also calls correct.
+        sympy_all_correct = verify.is_definitely_all_correct(steps_latex)
+        if sympy_all_correct:
+            logger.info("sympy confirmed all correct; ignoring llm explanation")
+
+        if sympy_all_correct or analysis.all_correct:
             resp = HelpResponse(
                 latex=latex,
                 explanation="Your work looks correct — every step follows from the previous one.",
