@@ -66,6 +66,12 @@ export class WhiteboardEngine {
   private pointers = new Map<number, { x: number; y: number }>()
   private gesture: { midX: number; midY: number; dist: number } | null = null
 
+  // Goodnotes-style pen mode: the first time we see an Apple Pencil event in
+  // this session, latch into pen mode. From then on, fingers only pan/zoom —
+  // they never draw — and palm contacts that land while a Pencil stroke is in
+  // progress are rejected entirely. Resets on page reload.
+  private penMode = false
+
   private pathCache = new Map<string, { len: number; path: Path2D }>()
   private listeners = new Set<Listener>()
   private rafId = 0
@@ -88,6 +94,11 @@ export class WhiteboardEngine {
     canvas.addEventListener('pointerup', this.onPointerUp)
     canvas.addEventListener('pointercancel', this.onPointerUp)
     canvas.addEventListener('wheel', this.onWheel, { passive: false })
+    // iPadOS Scribble (Pencil → text recognition) silently swallows Pencil
+    // events mid-stroke unless we preventDefault the underlying touchmove.
+    // `touch-action: none` alone isn't enough — Scribble intercepts before
+    // touch-action applies. Must be non-passive for preventDefault to take.
+    canvas.addEventListener('touchmove', this.onTouchMove, { passive: false })
     window.addEventListener('keydown', this.onKeyDown)
     this.requestRender()
   }
@@ -233,6 +244,33 @@ export class WhiteboardEngine {
   // ---------------------------------------------------------------------
 
   private onPointerDown = (e: PointerEvent): void => {
+    // Sticky pen-mode latch. Once the user ever uses the Pencil, fingers
+    // become pan/zoom only for the rest of the session — same UX as Goodnotes
+    // and Excalidraw. iPad Safari does not flag touches as "palm", so the
+    // only reliable separation is by pointerType.
+    if (e.pointerType === 'pen') this.penMode = true
+
+    // Palm rejection: while a Pencil stroke is in progress, ignore any new
+    // touch pointers entirely. This is the core fix — without it, the palm
+    // landing on the screen would push pointers.size to 2, cancel the active
+    // stroke, and start a phantom pinch-zoom gesture. By bailing here, the
+    // touch is never captured and never enters the gesture/pan pipeline.
+    if (this.penMode && e.pointerType === 'touch' && this.drawing) {
+      return
+    }
+
+    // Pen wins: if a Pencil comes down while fingers are panning or
+    // gesturing, abandon the finger action and let the Pencil take over.
+    // (Common when the user lifts their palm to draw without first lifting
+    // the panning finger.)
+    if (e.pointerType === 'pen' && this.pointers.size > 0) {
+      this.cancelActiveAction()
+      for (const id of this.pointers.keys()) {
+        if (this.canvas.hasPointerCapture(id)) this.canvas.releasePointerCapture(id)
+      }
+      this.pointers.clear()
+    }
+
     this.canvas.setPointerCapture(e.pointerId)
     const screen = this.screenOf(e.clientX, e.clientY)
     this.pointers.set(e.pointerId, screen)
@@ -253,6 +291,14 @@ export class WhiteboardEngine {
       return
     }
 
+    // In pen mode, single-finger touch always pans — fingers never draw,
+    // regardless of the active tool. This is Goodnotes-style: tool selection
+    // applies to the Pencil; the finger is reserved for scrolling the board.
+    if (this.penMode && e.pointerType === 'touch') {
+      this.panFrom = { x: screen.x, y: screen.y, camX: this.camera.x, camY: this.camera.y }
+      return
+    }
+
     if (this.tool === 'draw') {
       this.drawing = {
         id: uid(),
@@ -269,6 +315,11 @@ export class WhiteboardEngine {
     } else if (this.tool === 'select') {
       this.beginSelect(page.x, page.y)
     }
+  }
+
+  /** Scribble workaround — see the touchmove listener registration above. */
+  private onTouchMove = (e: TouchEvent): void => {
+    e.preventDefault()
   }
 
   private onPointerMove = (e: PointerEvent): void => {
@@ -650,6 +701,7 @@ export class WhiteboardEngine {
     this.canvas.removeEventListener('pointerup', this.onPointerUp)
     this.canvas.removeEventListener('pointercancel', this.onPointerUp)
     this.canvas.removeEventListener('wheel', this.onWheel)
+    this.canvas.removeEventListener('touchmove', this.onTouchMove)
     window.removeEventListener('keydown', this.onKeyDown)
     this.listeners.clear()
   }
