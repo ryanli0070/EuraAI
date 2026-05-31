@@ -42,6 +42,11 @@ SUPABASE_URL: Final[str] = _require("SUPABASE_URL").rstrip("/")
 SUPABASE_JWKS_URL: Final[str] = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_JWT_SECRET: Final[str] = _require("SUPABASE_JWT_SECRET")
 
+# Service-role key (full admin; bypasses RLS). Optional so the app still boots
+# without it — only the account-deletion endpoint needs it, and that endpoint
+# returns 503 when it's unset. NEVER expose this to the browser.
+SUPABASE_SERVICE_ROLE_KEY: Final[str] = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
 # Image preprocessing — vision API tiles billed by pixel count.
 MAX_IMAGE_WIDTH: Final[int] = _int_env("MAX_IMAGE_WIDTH", 1600)
 

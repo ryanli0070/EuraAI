@@ -21,6 +21,9 @@ slowapi>=0.1.9
 # asymmetric algorithms if/when the project enables JWT signing keys).
 pyjwt[crypto]>=2.8.0
 
+# Direct HTTP client for server-side Supabase admin calls (account deletion).
+httpx>=0.27
+
 # --- Pinned transitives (resolved by pip during initial install) ---
 annotated-types==0.7.0
 anyio==4.13.0
