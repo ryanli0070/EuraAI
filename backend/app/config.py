@@ -32,8 +32,14 @@ def _int_env(name: str, default: int) -> int:
 OPENAI_API_KEY: Final[str] = _require("OPENAI_API_KEY")
 OPENAI_MODEL: Final[str] = os.getenv("OPENAI_MODEL", "gpt-4o-2024-08-06")
 
-# Supabase — used to validate access tokens on protected routes. Grab the
-# secret from the Supabase dashboard: Settings -> API -> JWT secret.
+# Supabase — used to validate access tokens on protected routes.
+# SUPABASE_URL derives the JWKS endpoint for asymmetric (ES256/RS256) tokens,
+# which is how new Supabase projects sign access tokens by default.
+# SUPABASE_JWT_SECRET is the legacy shared secret, kept only as the HS256
+# fallback (Settings -> API -> JWT secret). The token header's `alg` selects
+# which path app/auth.py uses.
+SUPABASE_URL: Final[str] = _require("SUPABASE_URL").rstrip("/")
+SUPABASE_JWKS_URL: Final[str] = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
 SUPABASE_JWT_SECRET: Final[str] = _require("SUPABASE_JWT_SECRET")
 
 # Image preprocessing — vision API tiles billed by pixel count.
