@@ -2,21 +2,24 @@
 
 **Branch:** `supabase-migration`
 **Last updated:** 2026-06-02
-**Status:** Supabase migration **code-complete and committed**, now **running locally on macOS** end-to-end. Account deletion **activated** (service-role key set + validated). Live schema **snapshotted to disk** (`supabase/schema.sql`). **Backend not yet deployed** — that's the active task (see "Resume here" below + §15).
+**Status:** Supabase migration **code-complete and committed**, running locally on macOS end-to-end. Account deletion **activated** (service-role key set + validated). Live schema **snapshotted to disk** (`supabase/schema.sql`). **Backend deployed over HTTPS on AWS App Runner** (`https://t8tutmtkjt.us-east-1.awsapprunner.com`, verified) and the frontend prod build targets it — **the app is now ready to be wrapped in Capacitor** (see "Resume here" below + §15).
 
 ---
 
-## ⏭️ Resume here (next session — 2026-06-02)
+## ⏭️ Resume here (next session)
 
-**One step remains to reach the "ready to wrap in Capacitor" milestone: deploy the backend over HTTPS.** Everything else for that milestone is done (local stack runs, account deletion live, schema on disk, frontend prod build verified).
+**✅ Milestone reached: the backend is deployed over HTTPS, so the app is now ready to be wrapped in Capacitor.** The FastAPI backend runs on **AWS App Runner** at **`https://t8tutmtkjt.us-east-1.awsapprunner.com`** — verified this session: `/api/health` → 200 `{"ok":true}`, POST `/api/check` & `/api/help` no-token → 401, and the `capacitor://localhost` CORS preflight returns the right `Access-Control-Allow-Origin`. `frontend/.env.production` points at it and the prod build bakes it in (no `localhost` leftover).
 
-**Decision to make first — where to host the FastAPI backend.** AWS was attempted (you have $100 credit) but **this AWS account blocks the managed-container services**: App Runner → `SubscriptionRequiredException`; Lightsail Containers → 0 quota. (Both liftable via an AWS quota/support request, hours-to-days.) EC2 / Lambda / ECS / Elastic Beanstalk **do** work. Open choice:
-- **EC2 + Caddy** — stays on AWS / uses the credit; ~20-30 min; single instance running uvicorn, auto-HTTPS via Caddy + a `sslip.io` hostname (no domain needed); more moving parts.
-- **Render free tier** — ~5 min, HTTPS, no card; doesn't touch the credit (free tier is free); cold-starts after 15 min idle (fine for dev).
+**Next stage — Capacitor integration (§15-C) + the remaining App Store blockers (§15-B):**
+1. **Wrap in Capacitor** — `npm i @capacitor/core @capacitor/cli @capacitor/ios`, `npx cap init`, add the iOS platform, `npx cap copy`. The web build already targets the deployed backend; CORS already allows `capacitor://localhost`.
+2. **Auth email deep links** (§15-C-7) — confirmation/reset links must return into the WKWebView (Capacitor URL scheme + Supabase Redirect-URL allowlist).
+3. **Token storage** (§15-C-8) — move the `supabase-js` session off `localStorage` to Capacitor secure storage before submission.
+4. **Apple Pencil** (§15-C-9) — verify `pointerType==='pen'` + pressure on a real iPad in the WKWebView.
+5. **Custom SMTP** (§15-B-4) + **App Privacy disclosures** (§15-B-5) — App Store blockers, independent of Capacitor.
 
-**Then:** (1) deploy (the `backend/Dockerfile` is ready, binds `0.0.0.0:8000`), (2) put the real HTTPS URL into `frontend/.env.production` → `VITE_API_BASE_URL` (currently a **placeholder**), (3) `cd frontend && npm run build`, (4) `curl <url>/api/health` → 200. That reaches the wrap-in-Capacitor point (§15-C).
+**App Runner ops (full deploy details in §15-A-2 + §18):** service `euraai-api`, region `us-east-1`, ARN `…/euraai-api/ba2e768cacd44d7a800ceab59a4f5c70`. **Redeploy** = rebuild/push the image (§18) then `aws apprunner start-deployment --service-arn <arn>`. **Stop billing while idle:** `aws apprunner pause-service --service-arn <arn>` (resume with `resume-service`). Smallest instance (0.25 vCPU / 0.5 GB) — bump if memory-pressured (§15-D-11).
 
-**Tooling installed this session (macOS, Homebrew):** `node` v26, `python@3.12` (backend venv at `backend/venv`), `supabase`, `flyctl`, `awscli` (IAM user `eura-deploy`, us-east-1), `colima`+`docker`, `lightsailctl`.
+**Tooling installed (macOS, Homebrew):** `node` v26, `python@3.12` (backend venv at `backend/venv`), `supabase`, `flyctl`, `awscli` (IAM user `eura-deploy`, us-east-1), `colima`+`docker`+`docker-buildx`, `lightsailctl`.
 
 > This file supersedes and replaces the old `HANDOFF.md`, `SUPABASE_MIGRATION.md`, and `EuraAI_Systems_Report.md` (all deleted — their still-relevant content is folded in here). The whiteboard-engine handoff at `frontend/src/lib/whiteboard/HANDOFF.md` is a separate subsystem and is left in place.
 
@@ -28,7 +31,7 @@ A math-tutoring app (working name "Orion") for iPad: students draw work on a cus
 
 **Stack**
 - **Frontend:** React 19 + Vite + TypeScript; in-house `WhiteboardEngine` (canvas); KaTeX; Framer Motion. Deployed to Vercel (web); to be wrapped in Capacitor for iOS.
-- **Backend:** FastAPI (Python) on Fly.io (`euraai-api`, single shared-CPU 512MB machine).
+- **Backend:** FastAPI (Python) on AWS App Runner (`euraai-api`, 0.25 vCPU / 0.5 GB, us-east-1).
 - **AI:** OpenAI GPT-4o vision (OCR + step analysis + hint in one call) + SymPy verification.
 - **Data/Auth:** Supabase (Postgres + Auth + Storage + RLS). Project ref `lfctnhvnpxrocafiwkdb`.
 
@@ -58,7 +61,7 @@ c2bc2e9  fix(auth): verify Supabase ES256 tokens via JWKS
 826e0be  Initial migration commit          <- schema/RLS/storage + frontend + backend JWT
 ```
 
-Uncommitted: `frontend/.env.production` (untracked — holds a **stale Fly URL placeholder**; set the real backend URL after deploy). The schema is now on disk at `supabase/schema.sql` (§13).
+`frontend/.env.production` now holds the **real App Runner backend URL** (`VITE_API_BASE_URL`) and is **committed** (its `VITE_*` values are public by design). The schema is on disk at `supabase/schema.sql` (§13).
 
 ---
 
@@ -75,7 +78,7 @@ Uncommitted: `frontend/.env.production` (untracked — holds a **stale Fly URL p
 | In-app account deletion | ✅ built + **activated** (service-role key set + validated) |
 | Local dev on macOS (serves + builds) | ✅ this session (`/api/health` 200, auth gate 401, prod build clean) |
 | Live schema snapshot on disk | ✅ `supabase/schema.sql` (commit `57e72e8`) |
-| Deploy backend over HTTPS | ❌ **active task** — AWS managed-container svcs blocked; pick EC2 vs Render (§15-A) |
+| Deploy backend over HTTPS | ✅ **AWS App Runner** (`euraai-api`); `/api/health` 200, auth 401, capacitor CORS ok (§15-A) |
 | Custom SMTP, auth deep links, privacy, token storage, Pencil test | ❌ not done (see §15) |
 
 ---
@@ -86,7 +89,7 @@ Uncommitted: `frontend/.env.production` (untracked — holds a **stale Fly URL p
 Browser (React+Vite)
   ├─ supabase-js ───────────► Supabase (Auth + Postgres + Storage)
   │   (auth + DB + Storage)      RLS enforces user_id == auth.uid()
-  └─ apiFetch (Bearer JWT) ──► FastAPI on Fly.io
+  └─ apiFetch (Bearer JWT) ──► FastAPI on AWS App Runner
                                   verifies JWT (ES256 via JWKS), per-user rate limit
                                   /api/check /api/help /api/chat /api/account /api/health
 ```
@@ -165,7 +168,7 @@ bucket_id = 'drawings' AND (select auth.uid())::text = (storage.foldername(name)
 - **`routes/check.py`, `help.py`, `chat.py`** — each gated with `Depends(get_current_user)`; call GPT-4o + SymPy. `/api/check` returns 200 even on failure (graceful `status:"error"`).
 - **`routes/account.py`** (new) — `DELETE /api/account`, `5/min`, gated. Returns **503** if `SUPABASE_SERVICE_ROLE_KEY` is unset (so the app still boots without it). Otherwise calls `supabase_admin.delete_user`.
 - **`supabase_admin.py`** (new) — service-role REST helpers (httpx): lists+removes the user's `{user_id}/` objects in both buckets, then `DELETE /auth/v1/admin/users/{id}` (cascades all Postgres rows via FK). Best-effort storage cleanup never blocks the user-row delete.
-- **`main.py`** — registers routers; CORS `allow_origins=CORS_ORIGINS` + regex `(https?|capacitor)://(localhost|127\.0\.0\.1)(:\d+)?` so **`capacitor://localhost` and `https://localhost` (iOS WebView) are always allowed** regardless of the env override. `/api/health` is unauthenticated (Fly health checks).
+- **`main.py`** — registers routers; CORS `allow_origins=CORS_ORIGINS` + regex `(https?|capacitor)://(localhost|127\.0\.0\.1)(:\d+)?` so **`capacitor://localhost` and `https://localhost` (iOS WebView) are always allowed** regardless of the env override. `/api/health` is unauthenticated (App Runner health checks).
 
 ## 10. Frontend (`frontend/src/`)
 
@@ -199,7 +202,7 @@ VITE_API_BASE_URL=http://localhost:8000
 VITE_SUPABASE_URL=https://lfctnhvnpxrocafiwkdb.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
-Populated on this macOS machine. A **`frontend/.env.production`** also exists (used by `npm run build`) with prod Supabase + publishable key + `VITE_API_BASE_URL` — currently a **placeholder** to replace with the deployed backend URL. (`.env.production` is not gitignored; its VITE_* values are public by design.)
+Populated on this macOS machine. A **`frontend/.env.production`** also exists (used by `npm run build`) with prod Supabase + publishable key + `VITE_API_BASE_URL` = the **deployed App Runner URL** `https://t8tutmtkjt.us-east-1.awsapprunner.com`. (`.env.production` is committed — not gitignored; its VITE_* values are public by design.)
 
 ---
 
@@ -247,6 +250,8 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 
 **Verified 2026-06-02 (macOS):** backend serves (`/api/health` 200, `/api/check` no-token 401); `npm run build` clean (dev + prod); Supabase **publishable** and **service-role** keys both validated against the live project (200); prod build bakes in `VITE_API_BASE_URL`.
 
+**Verified 2026-06-02 (deployed — App Runner):** service `euraai-api` reached `RUNNING`; `https://t8tutmtkjt.us-east-1.awsapprunner.com/api/health` → **200** `{"ok":true}` over valid TLS; POST `/api/check` & `/api/help` no-token → **401**; `capacitor://localhost` CORS preflight → **200** with matching `Access-Control-Allow-Origin`; `npm run build` bakes the App Runner URL into `dist/assets/*.js` (no `localhost:8000` leftover). *(The container reaching healthy also proves the SSM secrets injected correctly — `config.py` fail-fasts on any missing required var.)*
+
 **Still not verified:** the full account-deletion happy path through `DELETE /api/account` with a signed-in user (key is valid, but no end-to-end delete run).
 
 ---
@@ -255,7 +260,7 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 
 **A. Ship / activate**
 1. ✅ **Account deletion activated** — `SUPABASE_SERVICE_ROLE_KEY` is set in `.env` and validated against the Supabase admin API (backend restarted). *Full happy-path delete via `DELETE /api/account` with a signed-in user still un-run.*
-2. **Deploy the backend (ACTIVE TASK):** host the FastAPI app over HTTPS. **AWS App Runner + Lightsail Containers are blocked on this account** (Resume block); pick **EC2+Caddy** (AWS/credit) or **Render** (fast/free). `backend/Dockerfile` binds `0.0.0.0:8000`. Then set the real URL in `frontend/.env.production` and `npm run build`. (Web/Vercel deploy optional — Capacitor bundles the frontend.) CORS already allows `capacitor://localhost` via regex, so `CORS_ORIGINS` only needs a web origin if you ship web.
+2. ✅ **Backend deployed (DONE 2026-06-02):** FastAPI on **AWS App Runner** (`euraai-api`, us-east-1) at `https://t8tutmtkjt.us-east-1.awsapprunner.com`. Image cross-built `linux/amd64` (App Runner is x86_64-only) from `backend/Dockerfile` → pushed to **ECR** `euraai-api`. The 3 secrets (`OPENAI_API_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`) live in **SSM Parameter Store** (SecureString) and are injected via App Runner `RuntimeEnvironmentSecrets` (not plaintext config); `SUPABASE_URL` is a plain runtime env var. Two IAM roles: `AppRunnerECRAccessRole` (image pull) + `EuraAIAppRunnerInstanceRole` (SSM read, KMS-scoped to `ssm.*`). HTTP health check on `/api/health`. `frontend/.env.production` → `VITE_API_BASE_URL` set and `npm run build` verified (URL baked into the bundle, no `localhost` leftover). (Web/Vercel deploy still optional — Capacitor bundles the frontend; `CORS_ORIGINS` only needs a web origin if you ship web.)
 
 **B. Hard App Store blockers**
 3. ✅ **In-app account deletion** (Guideline 5.1.1(v)) — built + activated; verify the live happy path after deploy.
@@ -299,4 +304,6 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 
 - **Supabase project:** dashboard `https://supabase.com/dashboard/project/lfctnhvnpxrocafiwkdb`; API `https://lfctnhvnpxrocafiwkdb.supabase.co`.
 - **Whiteboard engine** (separate subsystem): `frontend/src/lib/whiteboard/HANDOFF.md`.
-- **Backend deploy config:** `backend/fly.toml` (documents required secrets; `min_machines_running = 1`).
+- **Backend deploy (live):** AWS App Runner service `euraai-api` (us-east-1), ARN `arn:aws:apprunner:us-east-1:691981917444:service/euraai-api/ba2e768cacd44d7a800ceab59a4f5c70`, URL `https://t8tutmtkjt.us-east-1.awsapprunner.com`. Image: ECR `691981917444.dkr.ecr.us-east-1.amazonaws.com/euraai-api:latest` (cross-built `linux/amd64`). Secrets in SSM `/euraai/prod/*` (SecureString).
+  - **Rebuild + redeploy:** (1) ECR login: `aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 691981917444.dkr.ecr.us-east-1.amazonaws.com`; (2) `docker buildx build --builder euraabuild --platform linux/amd64 --provenance=false -t 691981917444.dkr.ecr.us-east-1.amazonaws.com/euraai-api:latest --push backend/` (needs `colima start` + the `euraabuild` docker-container builder); (3) `aws apprunner start-deployment --service-arn <arn>`. **Pause to stop billing:** `aws apprunner pause-service --service-arn <arn>`.
+  - Legacy `backend/fly.toml` is **unused** (kept for reference only).
