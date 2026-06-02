@@ -15,7 +15,7 @@
 2. **Auth email deep links** (§15-C-7) — confirmation/reset links must return into the WKWebView (Capacitor URL scheme + Supabase Redirect-URL allowlist).
 3. **Token storage** (§15-C-8) — move the `supabase-js` session off `localStorage` to Capacitor secure storage before submission.
 4. **Apple Pencil** (§15-C-9) — verify `pointerType==='pen'` + pressure on a real iPad in the WKWebView.
-5. **Custom SMTP** (§15-B-4) + **App Privacy disclosures** (§15-B-5) — App Store blockers, independent of Capacitor.
+5. **App Privacy disclosures** (§15-B-5) — App Store blocker, independent of Capacitor. *(Custom SMTP ✅ done via Resend; in-app account deletion ✅ verified.)*
 
 **App Runner ops (full deploy details in §15-A-2 + §18):** service `euraai-api`, region `us-east-1`, ARN `…/euraai-api/ba2e768cacd44d7a800ceab59a4f5c70`. **Redeploy** = rebuild/push the image (§18) then `aws apprunner start-deployment --service-arn <arn>`. **Stop billing while idle:** `aws apprunner pause-service --service-arn <arn>` (resume with `resume-service`). Smallest instance (0.25 vCPU / 0.5 GB) — bump if memory-pressured (§15-D-11).
 
@@ -75,11 +75,12 @@ c2bc2e9  fix(auth): verify Supabase ES256 tokens via JWKS
 | Per-user rate limiting | ✅ in place |
 | Frontend auth gate + async data layer | ✅ builds clean, exercised via API |
 | Drawings/thumbnails Storage round-trip | ✅ verified (upload/download/delete + RLS) |
-| In-app account deletion | ✅ built + **activated** (service-role key set + validated) |
+| In-app account deletion | ✅ built + activated + **happy path verified end-to-end** |
 | Local dev on macOS (serves + builds) | ✅ this session (`/api/health` 200, auth gate 401, prod build clean) |
 | Live schema snapshot on disk | ✅ `supabase/schema.sql` (commit `57e72e8`) |
 | Deploy backend over HTTPS | ✅ **AWS App Runner** (`euraai-api`); `/api/health` 200, auth 401, capacitor CORS ok (§15-A) |
-| Custom SMTP, auth deep links, privacy, token storage, Pencil test | ❌ not done (see §15) |
+| Custom SMTP (auth emails deliver) | ✅ **Resend** SMTP wired into Supabase Auth (verified domain) |
+| Auth deep links, privacy, token storage, Pencil test | ❌ not done (see §15) |
 
 ---
 
@@ -220,7 +221,7 @@ npm install
 npm run dev
 ```
 
-**Email confirmation is ON** for this project: a fresh browser signup won't get a session until the emailed link is clicked. For local dev either disable confirmations in the Supabase dashboard, or confirm via SQL: `UPDATE auth.users SET email_confirmed_at = now() WHERE email = '…';`. The built-in Supabase email sender is heavily rate-limited (you'll hit `over_email_send_rate_limit`) — fine for testing, **needs custom SMTP for real users**.
+**Email confirmation is ON** for this project: a fresh browser signup won't get a session until the emailed link is clicked. For local dev either disable confirmations in the Supabase dashboard, or confirm via SQL: `UPDATE auth.users SET email_confirmed_at = now() WHERE email = '…';`. The built-in Supabase email sender is heavily rate-limited (`over_email_send_rate_limit`); **custom SMTP is now configured via Resend** (verified sending domain), so confirm/reset emails deliver reliably for real users (raise Supabase → Authentication → Rate Limits when you scale volume).
 
 ---
 
@@ -252,19 +253,19 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 
 **Verified 2026-06-02 (deployed — App Runner):** service `euraai-api` reached `RUNNING`; `https://t8tutmtkjt.us-east-1.awsapprunner.com/api/health` → **200** `{"ok":true}` over valid TLS; POST `/api/check` & `/api/help` no-token → **401**; `capacitor://localhost` CORS preflight → **200** with matching `Access-Control-Allow-Origin`; `npm run build` bakes the App Runner URL into `dist/assets/*.js` (no `localhost:8000` leftover). *(The container reaching healthy also proves the SSM secrets injected correctly — `config.py` fail-fasts on any missing required var.)*
 
-**Still not verified:** the full account-deletion happy path through `DELETE /api/account` with a signed-in user (key is valid, but no end-to-end delete run).
+**Verified 2026-06-02 (user-run):** the full account-deletion happy path through `DELETE /api/account` with a signed-in user — completed **end-to-end**. **Custom SMTP** (Resend) configured and confirm/reset email **delivery confirmed**.
 
 ---
 
 ## 15. Remaining work — App Store runway (prioritized)
 
 **A. Ship / activate**
-1. ✅ **Account deletion activated** — `SUPABASE_SERVICE_ROLE_KEY` is set in `.env` and validated against the Supabase admin API (backend restarted). *Full happy-path delete via `DELETE /api/account` with a signed-in user still un-run.*
+1. ✅ **Account deletion activated + verified** — `SUPABASE_SERVICE_ROLE_KEY` set in `.env` (and SSM for prod), validated against the Supabase admin API. *Full happy-path delete via `DELETE /api/account` with a signed-in user **confirmed end-to-end** (2026-06-02).*
 2. ✅ **Backend deployed (DONE 2026-06-02):** FastAPI on **AWS App Runner** (`euraai-api`, us-east-1) at `https://t8tutmtkjt.us-east-1.awsapprunner.com`. Image cross-built `linux/amd64` (App Runner is x86_64-only) from `backend/Dockerfile` → pushed to **ECR** `euraai-api`. The 3 secrets (`OPENAI_API_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`) live in **SSM Parameter Store** (SecureString) and are injected via App Runner `RuntimeEnvironmentSecrets` (not plaintext config); `SUPABASE_URL` is a plain runtime env var. Two IAM roles: `AppRunnerECRAccessRole` (image pull) + `EuraAIAppRunnerInstanceRole` (SSM read, KMS-scoped to `ssm.*`). HTTP health check on `/api/health`. `frontend/.env.production` → `VITE_API_BASE_URL` set and `npm run build` verified (URL baked into the bundle, no `localhost` leftover). (Web/Vercel deploy still optional — Capacitor bundles the frontend; `CORS_ORIGINS` only needs a web origin if you ship web.)
 
 **B. Hard App Store blockers**
-3. ✅ **In-app account deletion** (Guideline 5.1.1(v)) — built + activated; verify the live happy path after deploy.
-4. **Custom SMTP** in Supabase (built-in sender is rate-limited).
+3. ✅ **In-app account deletion** (Guideline 5.1.1(v)) — built + activated + **happy path verified end-to-end**.
+4. ✅ **Custom SMTP configured** — **Resend** SMTP wired into Supabase Auth (verified sending domain); confirm/reset emails now deliver reliably (replaces the rate-limited built-in sender). Host `smtp.resend.com`:465, user `resend`, pass = Resend API key.
 5. **App Privacy disclosures** + privacy-policy URL in App Store Connect (collects email + usage).
 6. ✅ **No Apple Sign-In needed** — email/password-only correctly avoids the SIWA mandate.
 
