@@ -32,6 +32,21 @@ def _int_env(name: str, default: int) -> int:
 OPENAI_API_KEY: Final[str] = _require("OPENAI_API_KEY")
 OPENAI_MODEL: Final[str] = os.getenv("OPENAI_MODEL", "gpt-4o-2024-08-06")
 
+# Supabase — used to validate access tokens on protected routes.
+# SUPABASE_URL derives the JWKS endpoint for asymmetric (ES256/RS256) tokens,
+# which is how new Supabase projects sign access tokens by default.
+# SUPABASE_JWT_SECRET is the legacy shared secret, kept only as the HS256
+# fallback (Settings -> API -> JWT secret). The token header's `alg` selects
+# which path app/auth.py uses.
+SUPABASE_URL: Final[str] = _require("SUPABASE_URL").rstrip("/")
+SUPABASE_JWKS_URL: Final[str] = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+SUPABASE_JWT_SECRET: Final[str] = _require("SUPABASE_JWT_SECRET")
+
+# Service-role key (full admin; bypasses RLS). Optional so the app still boots
+# without it — only the account-deletion endpoint needs it, and that endpoint
+# returns 503 when it's unset. NEVER expose this to the browser.
+SUPABASE_SERVICE_ROLE_KEY: Final[str] = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
 # Image preprocessing — vision API tiles billed by pixel count.
 MAX_IMAGE_WIDTH: Final[int] = _int_env("MAX_IMAGE_WIDTH", 1600)
 
@@ -39,9 +54,13 @@ MAX_IMAGE_WIDTH: Final[int] = _int_env("MAX_IMAGE_WIDTH", 1600)
 # 10 MB has headroom without inviting abuse.
 MAX_UPLOAD_BYTES: Final[int] = _int_env("MAX_UPLOAD_BYTES", 10 * 1024 * 1024)
 
-# CORS — comma-separated list. Dev fallback covers Vite's port shuffle.
+# CORS — comma-separated list. Dev fallback covers Vite's port shuffle and the
+# Capacitor iOS wrapper, which uses a `capacitor://localhost` origin.
 CORS_ORIGINS: Final[list[str]] = [
     o.strip()
-    for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+    for o in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,capacitor://localhost,https://localhost",
+    ).split(",")
     if o.strip()
 ]

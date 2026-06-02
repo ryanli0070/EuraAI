@@ -1,8 +1,9 @@
 import hashlib
 import logging
 
-from fastapi import APIRouter, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 
+from app.auth import get_current_user
 from app.errors import FileTooLargeError
 from app.limiter import limiter
 from app.routes.uploads import read_with_limit
@@ -18,7 +19,11 @@ router = APIRouter()
 
 @router.post("/check", response_model=CheckResponse)
 @limiter.limit("20/minute")
-async def check_work(request: Request, file: UploadFile = File(...)) -> CheckResponse:
+async def check_work(
+    request: Request,
+    file: UploadFile = File(...),
+    _user_id: str = Depends(get_current_user),
+) -> CheckResponse:
     image_hash = ""
     try:
         image_bytes = await read_with_limit(file)

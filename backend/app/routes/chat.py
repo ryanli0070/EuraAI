@@ -1,7 +1,8 @@
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from app.auth import get_current_user
 from app.limiter import limiter
 from app.schemas import ChatRequest, ChatResponse
 from app.services import chat as chat_service
@@ -13,7 +14,11 @@ router = APIRouter()
 
 @router.post("/chat", response_model=ChatResponse)
 @limiter.limit("30/minute")
-async def chat(request: Request, body: ChatRequest) -> ChatResponse:
+async def chat(
+    request: Request,
+    body: ChatRequest,
+    _user_id: str = Depends(get_current_user),
+) -> ChatResponse:
     question = body.question.strip()
     if not question:
         return ChatResponse(reply="What's your question?")

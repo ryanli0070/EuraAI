@@ -20,8 +20,8 @@ import {
   loadChat as loadCanvasChat,
   saveChat as saveCanvasChat,
   setThumbnail,
-  touchCanvas,
 } from '../lib/canvasStore'
+import { apiFetch } from '../lib/api'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -39,7 +39,6 @@ type HelpApiResponse = {
   status: 'ok' | 'all_correct' | 'no_math' | 'error'
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const MIN_W = 260
 const MIN_H = 180
 
@@ -76,14 +75,6 @@ const COLORS: { value: string; css: string; label: string }[] = [
 ]
 
 
-// Chat state is persisted per-canvas via canvasStore; here we just merge the
-// loaded box against current defaults so older shapes pick up new fields.
-function loadInitialChat(canvasId: string): { latex: string; messages: ChatMessage[]; box: ChatBox } {
-  const stored = loadCanvasChat(canvasId)
-  const box: ChatBox = { ...defaultBox(), ...(stored.box ?? {}) }
-  return { latex: stored.latex, messages: stored.messages, box }
-}
-
 const DEFAULT_ENGINE_STATE: EngineState = {
   tool: 'draw',
   color: '#1d1d1d',
@@ -102,14 +93,14 @@ export function Whiteboard({
 }) {
   const engineRef = useRef<WhiteboardEngine | null>(null)
   const checkMenuRef = useRef<HTMLDivElement | null>(null)
-  const initial = useMemo(() => loadInitialChat(canvasId), [canvasId])
-  const [latex, setLatex] = useState<string>(initial.latex)
-  const [messages, setMessages] = useState<ChatMessage[]>(initial.messages)
+  const [latex, setLatex] = useState<string>('')
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
   const [showCheckMenu, setShowCheckMenu] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [box, setBox] = useState<ChatBox>(() => initial.box ?? defaultBox())
+  const [box, setBox] = useState<ChatBox>(defaultBox)
+  const [chatReady, setChatReady] = useState(false)
   const [showColorPanel, setShowColorPanel] = useState(false)
   const [engineState, setEngineState] = useState<EngineState>(DEFAULT_ENGINE_STATE)
 
@@ -137,10 +128,29 @@ export function Whiteboard({
     return () => document.body.classList.remove('whiteboard-mode')
   }, [])
 
+  // Load chat state from the backend on canvas change. Reset the ready flag
+  // first so we don't overwrite the incoming load with stale (or empty) state
+  // via the save effect below.
   useEffect(() => {
+    let cancelled = false
+    setChatReady(false)
+    setLatex('')
+    setMessages([])
+    setBox(defaultBox())
+    void loadCanvasChat(canvasId).then((stored) => {
+      if (cancelled) return
+      setLatex(stored.latex)
+      setMessages(stored.messages)
+      setBox({ ...defaultBox(), ...(stored.box ?? {}) })
+      setChatReady(true)
+    })
+    return () => { cancelled = true }
+  }, [canvasId])
+
+  useEffect(() => {
+    if (!chatReady) return
     saveCanvasChat(canvasId, { latex, messages, box })
-    touchCanvas(canvasId)
-  }, [canvasId, latex, messages, box])
+  }, [canvasId, latex, messages, box, chatReady])
 
   const appendMessage = useCallback((m: ChatMessage) => {
     setMessages((prev) => [...prev, m])
@@ -182,7 +192,7 @@ export function Whiteboard({
         setCheckStatus('no_math')
         return
       }
-      const res = await fetch(`${API_BASE_URL}/api/check`, { method: 'POST', body: formData })
+      const res = await apiFetch('/api/check', { method: 'POST', body: formData })
       if (!res.ok) throw new Error(`Server responded ${res.status}`)
       const data = (await res.json()) as CheckResponse
       if (data.latex) setLatex(data.latex)
@@ -208,7 +218,7 @@ export function Whiteboard({
         setCheckStatus('no_math')
         return
       }
-      const res = await fetch(`${API_BASE_URL}/api/help`, { method: 'POST', body: formData })
+      const res = await apiFetch('/api/help', { method: 'POST', body: formData })
       if (!res.ok) throw new Error(`Server responded ${res.status}`)
       const data = (await res.json()) as HelpApiResponse
       if (data.latex) setLatex(data.latex)
@@ -233,7 +243,7 @@ export function Whiteboard({
     const nextHistory: ChatMessage[] = [...messages, { role: 'user', text: question }]
     setMessages(nextHistory)
     try {
-      const res = await fetch(`${API_BASE_URL}/api/chat`, {
+      const res = await apiFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -258,25 +268,17 @@ export function Whiteboard({
   }, [appendMessage, input, latex, messages, sending])
 
   // Capture a small thumbnail before leaving so the menu shows a recognizable
-  // preview. Best-effort: fall back to clearing the thumbnail if capture fails
-  // or the canvas is empty, so a now-empty canvas doesn't keep a stale image.
+  // preview. Best-effort: clear the thumbnail if capture fails or the canvas
+  // is empty, so a now-empty canvas doesn't keep a stale image.
   const handleHome = useCallback(async () => {
     const engine = engineRef.current
     if (engine) {
       try {
         if (engine.isEmpty()) {
-          setThumbnail(canvasId, undefined)
+          await setThumbnail(canvasId, null)
         } else {
           const blob = await engine.toImage({ padding: 16, scale: 0.5, background: true })
-          if (blob) {
-            const dataUrl = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader()
-              reader.onload = () => resolve(reader.result as string)
-              reader.onerror = () => reject(reader.error)
-              reader.readAsDataURL(blob)
-            })
-            setThumbnail(canvasId, dataUrl)
-          }
+          if (blob) await setThumbnail(canvasId, blob)
         }
       } catch (err) {
         console.warn('[EuraAI] thumbnail capture failed', err)
