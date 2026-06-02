@@ -275,7 +275,7 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 9. **Apple Pencil:** verify `pointerType==='pen'` + pressure surface in WKWebView on real iPad.
 
 **D. Before public scale (not submission blockers)**
-10. OpenAI **budget cap** + job queue (bursts still hit OpenAI synchronously; per-user limiting is in place).
+10. ✅ **OpenAI budget cap set** — monthly hard cap + alert in the OpenAI dashboard (the real ceiling). Optional per-call `max_tokens` insurance for the `check`/`help` vision calls was **intentionally skipped** (dashboard cap suffices; `chat.py` already caps at 220). Still open as a scale item: a **job queue** — bursts hit OpenAI synchronously (per-user rate limiting is in place).
 11. Pick an adequate instance size at deploy (the old Fly plan was 512 MB; bump if memory pressure appears).
 12. ✅ **Schema on disk** — `supabase/schema.sql` (§13).
 
