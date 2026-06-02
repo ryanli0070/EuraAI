@@ -1,8 +1,22 @@
 # EuraAI — Source-of-Truth Handoff
 
 **Branch:** `supabase-migration`
-**Last updated:** 2026-05-31
-**Status:** Supabase migration **code-complete, committed, smoke-tested green end-to-end.** Backend auth and DB access both verified working with real tokens. In-app account deletion added. **Not yet deployed**, and several App-Store-prep items remain (see §13).
+**Last updated:** 2026-06-02
+**Status:** Supabase migration **code-complete and committed**, now **running locally on macOS** end-to-end. Account deletion **activated** (service-role key set + validated). Live schema **snapshotted to disk** (`supabase/schema.sql`). **Backend not yet deployed** — that's the active task (see "Resume here" below + §15).
+
+---
+
+## ⏭️ Resume here (next session — 2026-06-02)
+
+**One step remains to reach the "ready to wrap in Capacitor" milestone: deploy the backend over HTTPS.** Everything else for that milestone is done (local stack runs, account deletion live, schema on disk, frontend prod build verified).
+
+**Decision to make first — where to host the FastAPI backend.** AWS was attempted (you have $100 credit) but **this AWS account blocks the managed-container services**: App Runner → `SubscriptionRequiredException`; Lightsail Containers → 0 quota. (Both liftable via an AWS quota/support request, hours-to-days.) EC2 / Lambda / ECS / Elastic Beanstalk **do** work. Open choice:
+- **EC2 + Caddy** — stays on AWS / uses the credit; ~20-30 min; single instance running uvicorn, auto-HTTPS via Caddy + a `sslip.io` hostname (no domain needed); more moving parts.
+- **Render free tier** — ~5 min, HTTPS, no card; doesn't touch the credit (free tier is free); cold-starts after 15 min idle (fine for dev).
+
+**Then:** (1) deploy (the `backend/Dockerfile` is ready, binds `0.0.0.0:8000`), (2) put the real HTTPS URL into `frontend/.env.production` → `VITE_API_BASE_URL` (currently a **placeholder**), (3) `cd frontend && npm run build`, (4) `curl <url>/api/health` → 200. That reaches the wrap-in-Capacitor point (§15-C).
+
+**Tooling installed this session (macOS, Homebrew):** `node` v26, `python@3.12` (backend venv at `backend/venv`), `supabase`, `flyctl`, `awscli` (IAM user `eura-deploy`, us-east-1), `colima`+`docker`, `lightsailctl`.
 
 > This file supersedes and replaces the old `HANDOFF.md`, `SUPABASE_MIGRATION.md`, and `EuraAI_Systems_Report.md` (all deleted — their still-relevant content is folded in here). The whiteboard-engine handoff at `frontend/src/lib/whiteboard/HANDOFF.md` is a separate subsystem and is left in place.
 
@@ -36,13 +50,15 @@ Before this branch, **all** user state lived on-device (`localStorage` + Indexed
 The migration is **committed and pushed** (the old handoff's "uncommitted, here's a commit plan" is obsolete). On top of `826e0be Initial migration commit`:
 
 ```
+57e72e8  chore(db): snapshot Supabase schema (public + storage) to disk   <- 2026-06-02
+d234ed3  New Handoff + adding skills/agents for supabase
 4617d41  chore(fly): keep one machine warm; document Supabase secrets
 69c7634  feat(account): in-app account deletion (App Store 5.1.1(v))
 c2bc2e9  fix(auth): verify Supabase ES256 tokens via JWKS
 826e0be  Initial migration commit          <- schema/RLS/storage + frontend + backend JWT
 ```
 
-Untracked at repo root: this `HANDOFF.md`. (The migration SQL is **not** on disk — it lives only in Supabase's migration table; see §11.)
+Uncommitted: `frontend/.env.production` (untracked — holds a **stale Fly URL placeholder**; set the real backend URL after deploy). The schema is now on disk at `supabase/schema.sql` (§13).
 
 ---
 
@@ -56,9 +72,11 @@ Untracked at repo root: this `HANDOFF.md`. (The migration SQL is **not** on disk
 | Per-user rate limiting | ✅ in place |
 | Frontend auth gate + async data layer | ✅ builds clean, exercised via API |
 | Drawings/thumbnails Storage round-trip | ✅ verified (upload/download/delete + RLS) |
-| In-app account deletion | ✅ built + gated; **needs service-role key to activate** |
-| Deploy to Fly + Vercel with new env | ❌ not done |
-| Custom SMTP, auth deep links, privacy, token storage, Pencil test | ❌ not done (see §13) |
+| In-app account deletion | ✅ built + **activated** (service-role key set + validated) |
+| Local dev on macOS (serves + builds) | ✅ this session (`/api/health` 200, auth gate 401, prod build clean) |
+| Live schema snapshot on disk | ✅ `supabase/schema.sql` (commit `57e72e8`) |
+| Deploy backend over HTTPS | ❌ **active task** — AWS managed-container svcs blocked; pick EC2 vs Render (§15-A) |
+| Custom SMTP, auth deep links, privacy, token storage, Pencil test | ❌ not done (see §15) |
 
 ---
 
@@ -181,18 +199,17 @@ VITE_API_BASE_URL=http://localhost:8000
 VITE_SUPABASE_URL=https://lfctnhvnpxrocafiwkdb.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
-Already populated on the current dev machine.
+Populated on this macOS machine. A **`frontend/.env.production`** also exists (used by `npm run build`) with prod Supabase + publishable key + `VITE_API_BASE_URL` — currently a **placeholder** to replace with the deployed backend URL. (`.env.production` is not gitignored; its VITE_* values are public by design.)
 
 ---
 
 ## 12. Running locally
 
 ```bash
-# Backend
-cd backend
-venv/Scripts/python.exe -m pip install -r requirements.txt    # incl. pyjwt[crypto], cryptography, httpx
+# Backend (macOS — venv is Python 3.12 at backend/venv; system python3 is 3.9, too old)
+backend/venv/bin/python -m pip install -r backend/requirements.txt    # incl. pyjwt[crypto], cryptography, httpx
 # ensure root .env has OPENAI_API_KEY, SUPABASE_URL, SUPABASE_JWT_SECRET
-python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000   # (run from repo root)
+backend/venv/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000   # (run from repo root)
 
 # Frontend
 cd frontend
@@ -213,7 +230,7 @@ npm run dev
 | 20260527213950 | `pin_function_search_path` (search_path='' on trigger fns) |
 | 20260531030026 | `grant_table_privileges` (the GRANTs fix — §7) |
 
-> **TODO:** run `supabase db pull` to commit these to `supabase/migrations/*.sql` so the schema has a source-of-truth on disk. Today they exist only in `supabase_migrations.schema_migrations`.
+> **DONE (2026-06-02):** live schema snapshotted to **`supabase/schema.sql`** (commit `57e72e8`) via native `pg_dump` — public schema (4 tables, RLS, triggers, indexes, functions, GRANTs) + `storage` buckets/policies. This is a source-of-truth **snapshot**, *not* history-synced migrations: `supabase db pull/push` as a workflow would still need the migration history reconciled (and Docker, which we sidestepped). The 4 versions still live in `supabase_migrations.schema_migrations`.
 
 ---
 
@@ -228,18 +245,20 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 - `DELETE /api/account` auth gate: no token / garbage token → **401**.
 - `get_advisors` (security) → **0 findings**; frontend `npm run build` → **clean**.
 
-**Not yet verified (needs `SUPABASE_SERVICE_ROLE_KEY`):** the full account-deletion happy path through the live endpoint (currently returns 503 until the key is set).
+**Verified 2026-06-02 (macOS):** backend serves (`/api/health` 200, `/api/check` no-token 401); `npm run build` clean (dev + prod); Supabase **publishable** and **service-role** keys both validated against the live project (200); prod build bakes in `VITE_API_BASE_URL`.
+
+**Still not verified:** the full account-deletion happy path through `DELETE /api/account` with a signed-in user (key is valid, but no end-to-end delete run).
 
 ---
 
 ## 15. Remaining work — App Store runway (prioritized)
 
 **A. Ship / activate**
-1. Add `SUPABASE_SERVICE_ROLE_KEY` to `.env` (+ Fly secret) to activate account deletion; then run the full delete smoke test.
-2. **Deploy:** Fly backend with `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, (`SUPABASE_SERVICE_ROLE_KEY`), `OPENAI_API_KEY`, `CORS_ORIGINS`; redeploy Vercel frontend with prod `VITE_*`. (Capacitor origin is always allowed via the regex, so `CORS_ORIGINS` only needs the web origin.)
+1. ✅ **Account deletion activated** — `SUPABASE_SERVICE_ROLE_KEY` is set in `.env` and validated against the Supabase admin API (backend restarted). *Full happy-path delete via `DELETE /api/account` with a signed-in user still un-run.*
+2. **Deploy the backend (ACTIVE TASK):** host the FastAPI app over HTTPS. **AWS App Runner + Lightsail Containers are blocked on this account** (Resume block); pick **EC2+Caddy** (AWS/credit) or **Render** (fast/free). `backend/Dockerfile` binds `0.0.0.0:8000`. Then set the real URL in `frontend/.env.production` and `npm run build`. (Web/Vercel deploy optional — Capacitor bundles the frontend.) CORS already allows `capacitor://localhost` via regex, so `CORS_ORIGINS` only needs a web origin if you ship web.
 
 **B. Hard App Store blockers**
-3. ✅ **In-app account deletion** (Guideline 5.1.1(v)) — built; just needs the key + deploy.
+3. ✅ **In-app account deletion** (Guideline 5.1.1(v)) — built + activated; verify the live happy path after deploy.
 4. **Custom SMTP** in Supabase (built-in sender is rate-limited).
 5. **App Privacy disclosures** + privacy-policy URL in App Store Connect (collects email + usage).
 6. ✅ **No Apple Sign-In needed** — email/password-only correctly avoids the SIWA mandate.
@@ -251,8 +270,8 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 
 **D. Before public scale (not submission blockers)**
 10. OpenAI **budget cap** + job queue (bursts still hit OpenAI synchronously; per-user limiting is in place).
-11. Consider 1GB RAM on Fly if 512MB shows memory pressure post-launch.
-12. Commit the migration SQL on disk (§13 TODO).
+11. Pick an adequate instance size at deploy (the old Fly plan was 512 MB; bump if memory pressure appears).
+12. ✅ **Schema on disk** — `supabase/schema.sql` (§13).
 
 ---
 
