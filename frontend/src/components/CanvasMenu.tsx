@@ -21,6 +21,7 @@ import {
   subscribe,
 } from '../lib/canvasStore'
 import { deleteAccount, signOut } from '../lib/auth'
+import { AccountScreen, type AccountScreenId } from './AccountScreen'
 
 const STYLES = `
 .canvas-menu{
@@ -150,6 +151,7 @@ const STYLES = `
 .canvas-menu .grid{
   display:grid;
   grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+  align-items:start;
   gap:18px;
   padding:18px 0 80px;
 }
@@ -180,10 +182,40 @@ const STYLES = `
 .canvas-menu .thumb .empty{
   font-family:var(--hand);font-size:22px;color:var(--pencil);transform:rotate(-2deg);
 }
-.canvas-menu .thumb.folder{
-  background:#f1ead4;
+/* Folders get a real folder silhouette: a tab on top + a manila body. */
+.canvas-menu .card.folder-card{
+  overflow:visible;
+  margin-top:14px;
+  background:#f3ecd6;
 }
-.canvas-menu .thumb.folder svg{width:64px;height:64px}
+.canvas-menu .card.folder-card::before{
+  content:"";position:absolute;left:16px;top:-14px;
+  width:42%;height:16px;
+  background:#f3ecd6;
+  border:1.5px solid var(--ink);border-bottom:none;
+  border-radius:7px 9px 0 0;
+  z-index:2;
+}
+.canvas-menu .thumb.folder{
+  height:126px;
+  position:relative;
+  background:#f3ecd6;
+  border-bottom:none;
+  border-radius:6.5px 6.5px 0 0;
+}
+.canvas-menu .folder-inside{position:absolute;inset:0}
+.canvas-menu .folder-inside .page{
+  position:absolute;left:50%;transform:translateX(-50%);
+  width:84%;height:56px;
+  background:#fffdf6;border:1.5px solid var(--ink);border-radius:4px 4px 0 0;
+}
+.canvas-menu .folder-inside .p1{top:24px;z-index:1;background:#f6efdd}
+.canvas-menu .folder-inside .p2{top:30px;z-index:2;background:#fbf6ea}
+.canvas-menu .folder-inside .p3{top:36px;z-index:3;background:#fffdf6}
+.canvas-menu .folder-inside .folder-front{
+  position:absolute;left:0;right:0;top:46px;bottom:0;
+  background:#f3ecd6;border-top:1.5px solid var(--ink);z-index:4;
+}
 
 .canvas-menu .card-body{
   padding:12px 14px;
@@ -260,6 +292,7 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   const [parent, setParent] = useState<FolderId | null>(null)
   const [search, setSearch] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [accountScreen, setAccountScreen] = useState<AccountScreenId | null>(null)
   const [openMenuId, setOpenMenuId] = useState<ItemId | null>(null)
   const [renamingId, setRenamingId] = useState<ItemId | null>(null)
   const [draggingId, setDraggingId] = useState<ItemId | null>(null)
@@ -504,6 +537,7 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        onOpenScreen={(id) => { setSidebarOpen(false); setAccountScreen(id) }}
         onSignOut={() => { setSidebarOpen(false); void signOut() }}
         onDeleteAccount={async () => {
           if (!confirm('Permanently delete your account and every canvas, folder, and chat? This cannot be undone.')) return
@@ -512,6 +546,8 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
           // On success, the auth state change routes back to the sign-in screen.
         }}
       />
+
+      <AccountScreen screen={accountScreen} onClose={() => setAccountScreen(null)} />
     </div>
   )
 }
@@ -519,11 +555,13 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
 function Sidebar({
   open,
   onClose,
+  onOpenScreen,
   onSignOut,
   onDeleteAccount,
 }: {
   open: boolean
   onClose: () => void
+  onOpenScreen: (id: AccountScreenId) => void
   onSignOut: () => void
   onDeleteAccount: () => void
 }) {
@@ -537,10 +575,10 @@ function Sidebar({
   }, [open, onClose])
 
   const items: { label: string; icon: ComponentType; onClick?: () => void; danger?: boolean }[] = [
-    { label: 'Profile', icon: ProfileIcon },
-    { label: 'Settings', icon: SettingsIcon },
-    { label: 'Payments', icon: PaymentsIcon },
-    { label: 'Help & Support', icon: HelpIcon },
+    { label: 'Profile', icon: ProfileIcon, onClick: () => onOpenScreen('profile') },
+    { label: 'Settings', icon: SettingsIcon, onClick: () => onOpenScreen('settings') },
+    { label: 'Payments', icon: PaymentsIcon, onClick: () => onOpenScreen('payments') },
+    { label: 'Help & Support', icon: HelpIcon, onClick: () => onOpenScreen('help') },
     { label: 'Sign Out', icon: SignOutIcon, onClick: onSignOut },
     { label: 'Delete Account', icon: TrashIcon, onClick: onDeleteAccount, danger: true },
   ]
@@ -632,7 +670,7 @@ function Card({
   const isFolder = item.kind === 'folder'
   return (
     <div
-      className={`card ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''}`}
+      className={`card ${isFolder ? 'folder-card' : ''} ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''}`}
       draggable={!isRenaming}
       onClick={() => { if (!isRenaming) onOpen() }}
       onDoubleClick={(e) => { e.stopPropagation(); onRequestRename() }}
@@ -643,7 +681,7 @@ function Card({
       onDrop={onDrop}
     >
       <div className={`thumb ${isFolder ? 'folder' : ''}`}>
-        {isFolder ? <FolderArt /> : <CanvasThumb canvas={item as CanvasMeta} />}
+        {isFolder ? <FolderSheets index={index} folder={item as Folder} /> : <CanvasThumb canvas={item as CanvasMeta} />}
       </div>
       <div className="card-body">
         <div className="card-name">
@@ -730,19 +768,22 @@ function CanvasThumb({ canvas }: { canvas: CanvasMeta }) {
   return <span className="empty">empty page</span>
 }
 
-function FolderArt() {
+function FolderSheets({ index, folder }: { index: CanvasIndex; folder: Folder }) {
+  const count = listChildren(index, folder.id).length
+  if (count === 0) return <span className="empty">empty folder</span>
+  // A few wide page-edges tucked behind the folder's front, peeking near the top.
+  const layout: Record<number, string[]> = {
+    1: ['p3'],
+    2: ['p2', 'p3'],
+    3: ['p1', 'p2', 'p3'],
+  }
   return (
-    <svg viewBox="0 0 64 64" fill="none">
-      <path
-        d="M 6 18 L 6 52 Q 6 56 10 56 L 54 56 Q 58 56 58 52 L 58 22 Q 58 18 54 18 L 30 18 L 24 12 L 10 12 Q 6 12 6 18 Z"
-        stroke="#18243f"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="#fdfaf2"
-      />
-      <path d="M 14 30 L 50 30" stroke="#d9cfb6" strokeWidth="1.5" strokeDasharray="3 4" />
-    </svg>
+    <div className="folder-inside" aria-hidden="true">
+      {layout[Math.min(count, 3)].map((c) => (
+        <span key={c} className={`page ${c}`} />
+      ))}
+      <div className="folder-front" />
+    </div>
   )
 }
 

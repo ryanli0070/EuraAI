@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   Copy,
   Eraser,
+  FilePlus,
   Hand,
   Maximize2,
   Minimize2,
@@ -22,6 +23,7 @@ import {
   setThumbnail,
 } from '../lib/canvasStore'
 import { apiFetch } from '../lib/api'
+import { getShowGrid, subscribeSettings } from '../lib/settings'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -82,6 +84,9 @@ const DEFAULT_ENGINE_STATE: EngineState = {
   canRedo: false,
   isEmpty: true,
   hasSelection: false,
+  pull: 0,
+  page: 0,
+  pageCount: 1,
 }
 
 export function Whiteboard({
@@ -106,8 +111,16 @@ export function Whiteboard({
 
   const handleMount = useCallback((engine: WhiteboardEngine) => {
     engineRef.current = engine
+    engine.setShowGrid(getShowGrid())
     setEngineState(engine.getState())
     engine.subscribe(() => setEngineState(engine.getState()))
+  }, [])
+
+  // Keep the live page's grid in sync with the Settings toggle.
+  useEffect(() => {
+    return subscribeSettings(() => {
+      engineRef.current?.setShowGrid(getShowGrid())
+    })
   }, [])
 
   const handleSelectTool = useCallback((tool: ToolId) => {
@@ -293,9 +306,24 @@ export function Whiteboard({
     setCheckStatus('idle')
   }, [])
 
+  const handleDeletePage = useCallback(() => {
+    engineRef.current?.deletePage()
+  }, [])
+
   return (
     <div className="fixed inset-0">
       <Canvas canvasId={canvasId} onMount={handleMount} />
+
+      {engineState.pull > 0 && <PullToAddPage progress={engineState.pull} />}
+
+      {engineState.pageCount > 1 && (
+        <PageControls
+          key={`${engineState.page}-${engineState.pageCount}`}
+          page={engineState.page}
+          count={engineState.pageCount}
+          onDelete={handleDeletePage}
+        />
+      )}
 
       <Toolbar
         state={engineState}
@@ -460,6 +488,113 @@ function HomeButton({ onHome }: { onHome?: () => void }) {
       <ChevronLeft className="h-4 w-4" strokeWidth={2.25} />
       <span className="leading-none">Home</span>
     </button>
+  )
+}
+
+/**
+ * GoodNotes-style affordance shown while the user drags past the last page.
+ * A ring fills as they pull; at 100% the copy flips to "release to add page".
+ * Purely decorative — pointer-events are off so it never eats the drag.
+ */
+function PullToAddPage({ progress }: { progress: number }) {
+  const p = Math.min(1, Math.max(0, progress))
+  const ready = p >= 1
+  const r = 22
+  const circumference = 2 * Math.PI * r
+  const accent = ready ? '#16a34a' : '#2563eb'
+
+  return (
+    <div className="pointer-events-none absolute right-6 top-1/2 z-[1000] -translate-y-1/2">
+      <div
+        className="flex w-28 flex-col items-center gap-2 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-3 text-center shadow-xl backdrop-blur"
+        style={{ transform: `scale(${0.92 + 0.08 * p})` }}
+      >
+        <div className="relative flex h-13 w-13 items-center justify-center" style={{ height: 52, width: 52 }}>
+          <svg className="absolute inset-0 -rotate-90" width="52" height="52" viewBox="0 0 52 52">
+            <circle cx="26" cy="26" r={r} fill="none" stroke="#e5e7eb" strokeWidth="3" />
+            <circle
+              cx="26"
+              cy="26"
+              r={r}
+              fill="none"
+              stroke={accent}
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={circumference * (1 - p)}
+              style={{ transition: 'stroke-dashoffset 60ms linear' }}
+            />
+          </svg>
+          <FilePlus className="h-5 w-5" strokeWidth={2.25} style={{ color: accent }} />
+        </div>
+        <span className="text-xs font-semibold leading-tight" style={{ color: ready ? '#16a34a' : '#6b7280' }}>
+          {ready ? 'Release to add page' : 'Keep pulling…'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Bottom-center page pill ("Page X / N") with a delete-page button. Deleting
+ * asks for confirmation first, since it discards a whole sheet of work.
+ */
+function PageControls({
+  page,
+  count,
+  onDelete,
+}: {
+  page: number
+  count: number
+  onDelete: () => void
+}) {
+  // Confirm state resets when page/count changes: the parent keys this element
+  // on both, so a swipe or delete remounts it fresh.
+  const [confirming, setConfirming] = useState(false)
+
+  return (
+    <div className="absolute bottom-6 left-1/2 z-[1000] -translate-x-1/2">
+      {confirming && (
+        <div className="absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-xl border border-neutral-200 bg-white p-3 shadow-xl">
+          <span className="whitespace-nowrap text-xs font-medium text-neutral-700">
+            Delete page {page + 1}?
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfirming(false)}
+              className="rounded-lg px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setConfirming(false)
+                onDelete()
+              }}
+              className="rounded-lg bg-red-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-700"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="flex items-center gap-0.5 rounded-full border border-neutral-200 bg-white/90 py-1 pl-3 pr-1.5 shadow-md backdrop-blur">
+        <span className="text-xs font-medium text-neutral-600">
+          Page {page + 1} <span className="text-neutral-400">/ {count}</span>
+        </span>
+        <button
+          onClick={() => setConfirming((v) => !v)}
+          title="Delete this page"
+          className={`ml-1 flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
+            confirming
+              ? 'bg-red-100 text-red-600'
+              : 'text-neutral-500 hover:bg-red-50 hover:text-red-600'
+          }`}
+        >
+          <Trash2 className="h-3.5 w-3.5" strokeWidth={2.25} />
+        </button>
+      </div>
+    </div>
   )
 }
 

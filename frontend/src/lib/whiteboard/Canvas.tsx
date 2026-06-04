@@ -55,7 +55,7 @@ export function Canvas({
   }, [canvasId])
 
   return (
-    <div ref={containerRef} className="absolute inset-0 bg-white">
+    <div ref={containerRef} className="absolute inset-0" style={{ backgroundColor: '#e9e7e0' }}>
       <canvas ref={canvasRef} className="block" />
     </div>
   )

@@ -25,9 +25,14 @@ export type Stroke = {
 export type WhiteboardDoc = {
   version: 1
   strokes: Stroke[]
+  /**
+   * Number of pages in the horizontal strip. Absent on older documents, which
+   * are treated as a single page.
+   */
+  pageCount?: number
 }
 
-export const emptyDoc = (): WhiteboardDoc => ({ version: 1, strokes: [] })
+export const emptyDoc = (): WhiteboardDoc => ({ version: 1, strokes: [], pageCount: 1 })
 
 export type ToolId = 'select' | 'draw' | 'eraser' | 'hand'
 
@@ -44,4 +49,10 @@ export type EngineState = {
   canRedo: boolean
   isEmpty: boolean
   hasSelection: boolean
+  /** 0 normally; 0..1 while pulling past the last page to create a new one. */
+  pull: number
+  /** Index of the page currently in view. */
+  page: number
+  /** Total number of pages in the document. */
+  pageCount: number
 }
