@@ -30,3 +30,18 @@ body.whiteboard-mode #root {
   -webkit-touch-callout: none;
   touch-action: none;
 }
+
+/*
+ * iOS safe-area insets. Only applied on the native (Capacitor) build — the
+ * `native` class is set on <html> in initNative(), so these rules never match
+ * the web/Vercel build and leave it untouched. The status bar is translucent
+ * and overlays the WebView (viewport-fit=cover), so the top menu bar must pad
+ * itself below it instead of rendering underneath.
+ */
+html.native .canvas-menu header.bar {
+  padding-top: calc(22px + env(safe-area-inset-top));
+}
+html.native .canvas-menu .container {
+  padding-left: calc(28px + env(safe-area-inset-left));
+  padding-right: calc(28px + env(safe-area-inset-right));
+}

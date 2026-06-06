@@ -32,6 +32,13 @@ const config: CapacitorConfig = {
       // Don't let the soft keyboard shove the canvas around.
       resize: 'none' as never,
     },
+    SplashScreen: {
+      // We dismiss it manually in initNative() once React has rendered, so the
+      // user never sees a white flash. Background matches the app's light UI.
+      launchAutoHide: false,
+      backgroundColor: '#fafafa',
+      showSpinner: false,
+    },
   },
 };
 

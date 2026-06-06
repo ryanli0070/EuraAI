@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { resetPassword, signIn, signUp } from '../lib/auth'
+import { hapticTap } from '../lib/native'
 
 type Mode = 'signin' | 'signup' | 'reset'
 
@@ -109,6 +110,7 @@ export function AuthScreen() {
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     if (submitting) return
+    void hapticTap()
     reset()
     setSubmitting(true)
     try {
