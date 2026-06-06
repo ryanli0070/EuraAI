@@ -33,7 +33,7 @@ const FIT_ZOOM_WIGGLE = 0.85
 // How far the page may be nudged past its resting position (vertical wiggle).
 const PAN_WIGGLE = 64
 const DEFAULT_COLOR = '#1d1d1d'
-const DEFAULT_SIZE = 6
+const DEFAULT_SIZE = 4
 const SAVE_DEBOUNCE_MS = 600
 
 // The page: a single sheet of paper the work lives on (US Letter, 8.5 : 11
@@ -128,6 +128,12 @@ export class WhiteboardEngine {
   private pointers = new Map<number, { x: number; y: number }>()
   private gesture: { midX: number; midY: number; dist: number } | null = null
 
+  // DOM overlay that visualizes the eraser's hit radius. Only the Pencil tip
+  // shows it (per Goodnotes-style UX — touch is for panning, not erasing),
+  // and only while the eraser tool is active. The element is owned by the
+  // React layer; the engine just toggles its style.
+  private eraserCursorEl: HTMLElement | null = null
+
   private pathCache = new Map<string, { len: number; path: Path2D }>()
   private listeners = new Set<Listener>()
   private rafId = 0
@@ -149,7 +155,13 @@ export class WhiteboardEngine {
     canvas.addEventListener('pointermove', this.onPointerMove)
     canvas.addEventListener('pointerup', this.onPointerUp)
     canvas.addEventListener('pointercancel', this.onPointerUp)
+    canvas.addEventListener('pointerleave', this.onPointerLeave)
     canvas.addEventListener('wheel', this.onWheel, { passive: false })
+    // iPadOS Scribble (Pencil → text recognition) silently swallows Pencil
+    // events mid-stroke unless we preventDefault the underlying touchmove.
+    // `touch-action: none` alone isn't enough — Scribble intercepts before
+    // touch-action applies. Must be non-passive for preventDefault to take.
+    canvas.addEventListener('touchmove', this.onTouchMove, { passive: false })
     window.addEventListener('keydown', this.onKeyDown)
     this.requestRender()
   }
@@ -534,6 +546,33 @@ export class WhiteboardEngine {
 
   private onPointerDown = (e: PointerEvent): void => {
     cancelAnimationFrame(this.animRaf) // interrupt any in-flight snap/scroll
+
+    // Hard rule: only the Pencil (and desktop mouse) draws. A touch pointer
+    // — finger or palm — never enters the drawing pipeline; it can only pan
+    // or pinch-zoom. This routing is fixed from the moment the whiteboard
+    // mounts, so the very first finger contact after a fresh page load pans
+    // the canvas instead of starting a stray stroke.
+
+    // Palm rejection: while a Pencil stroke is in progress, ignore any new
+    // touch pointers entirely. Without this, the palm landing on the screen
+    // would push pointers.size to 2, cancel the active stroke, and start a
+    // phantom pinch-zoom gesture. By bailing here, the touch is never
+    // captured and never enters the gesture/pan pipeline.
+    if (e.pointerType === 'touch' && this.drawing) {
+      return
+    }
+
+    // Pen wins: if a Pencil comes down while fingers are panning or
+    // gesturing, abandon the finger action and let the Pencil take over.
+    // (Common when the user lifts their palm to draw without first lifting
+    // the panning finger.)
+    if (e.pointerType === 'pen' && this.pointers.size > 0) {
+      this.cancelActiveAction()
+      for (const id of this.pointers.keys()) {
+        if (this.canvas.hasPointerCapture(id)) this.canvas.releasePointerCapture(id)
+      }
+      this.pointers.clear()
+    }
     this.canvas.setPointerCapture(e.pointerId)
     const screen = this.screenOf(e.clientX, e.clientY)
     this.pointers.set(e.pointerId, screen)
@@ -548,6 +587,22 @@ export class WhiteboardEngine {
 
     // Space/middle-mouse or the Hand tool pans/swipes pages.
     if (e.button === 1 || this.tool === 'hand') {
+      this.panFrom = {
+        x: screen.x,
+        y: screen.y,
+        scrollX0: this.scrollX,
+        offsetY0: this.offsetY,
+        lastX: screen.x,
+        lastT: performance.now(),
+      }
+      this.panVX = 0
+      return
+    }
+
+    // Single-finger touch always pans — fingers never draw, regardless of
+    // the active tool. Goodnotes-style: tool selection applies to the
+    // Pencil; the finger is reserved for scrolling the board.
+    if (e.pointerType === 'touch') {
       this.panFrom = {
         x: screen.x,
         y: screen.y,
@@ -583,7 +638,57 @@ export class WhiteboardEngine {
     }
   }
 
+  /** Scribble workaround — see the touchmove listener registration above. */
+  private onTouchMove = (e: TouchEvent): void => {
+    e.preventDefault()
+  }
+
+  // ---------------------------------------------------------------------
+  // Eraser cursor — DOM overlay that follows the Pencil tip in eraser mode
+  // ---------------------------------------------------------------------
+
+  /** Wire the React-owned cursor element into the engine. Pass `null` to
+   * detach. The engine mutates this element's `style` directly to avoid
+   * round-tripping every pointer move through React. */
+  setEraserCursorEl(el: HTMLElement | null): void {
+    this.eraserCursorEl = el
+    if (!el) return
+    if (this.tool !== 'eraser') this.hideEraserCursor()
+  }
+
+  /** Position + show the eraser cursor if (a) the eraser tool is active and
+   * (b) the event came from an Apple Pencil. Hide it otherwise. Coordinates
+   * are container-relative, matching the canvas element's positioned box. */
+  private updateEraserCursor(e: PointerEvent): void {
+    const el = this.eraserCursorEl
+    if (!el) return
+    if (this.tool !== 'eraser' || e.pointerType !== 'pen') {
+      this.hideEraserCursor()
+      return
+    }
+    const { x, y } = this.screenOf(e.clientX, e.clientY)
+    el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`
+    if (el.style.display !== 'block') el.style.display = 'block'
+  }
+
+  private hideEraserCursor(): void {
+    const el = this.eraserCursorEl
+    if (el && el.style.display !== 'none') el.style.display = 'none'
+  }
+
+  /** Fires when any pointer leaves the canvas rect — including Pencil hover
+   * pulling away on iPadOS 16.4+. Drop the cursor so it doesn't linger at
+   * the last hover position once the Pencil is no longer near the screen. */
+  private onPointerLeave = (e: PointerEvent): void => {
+    if (e.pointerType === 'pen') this.hideEraserCursor()
+  }
+
   private onPointerMove = (e: PointerEvent): void => {
+    // Update the eraser cursor regardless of whether this pointer is "active"
+    // (in the `pointers` map). On iPadOS 16.4+ the Pencil 2 / Pro fires hover
+    // pointermoves with no preceding pointerdown — we still want the cursor
+    // to track the tip during hover.
+    this.updateEraserCursor(e)
     if (!this.pointers.has(e.pointerId)) return
     const screen = this.screenOf(e.clientX, e.clientY)
     this.pointers.set(e.pointerId, screen)
@@ -909,6 +1014,7 @@ export class WhiteboardEngine {
     if (this.tool === tool) return
     this.tool = tool
     if (tool !== 'select') this.selection.clear()
+    if (tool !== 'eraser') this.hideEraserCursor()
     this.emit()
     this.requestRender()
   }
@@ -1045,7 +1151,9 @@ export class WhiteboardEngine {
     this.canvas.removeEventListener('pointermove', this.onPointerMove)
     this.canvas.removeEventListener('pointerup', this.onPointerUp)
     this.canvas.removeEventListener('pointercancel', this.onPointerUp)
+    this.canvas.removeEventListener('pointerleave', this.onPointerLeave)
     this.canvas.removeEventListener('wheel', this.onWheel)
+    this.canvas.removeEventListener('touchmove', this.onTouchMove)
     window.removeEventListener('keydown', this.onKeyDown)
     this.listeners.clear()
   }
