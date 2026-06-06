@@ -12,14 +12,26 @@ import io
 from typing import Optional
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.auth import get_current_user
 from app.llm.models import HelpOutput, Step, TutorOutput
 from app.llm import prompts as P
 from app.main import app
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _bypass_auth():
+    """The /check and /help routes are auth-gated (added in the Supabase
+    migration). These tests exercise route-level correctness logic, not auth,
+    so override the dependency to a fixed test user and restore it after."""
+    app.dependency_overrides[get_current_user] = lambda: "test-user-id"
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 def _steps(latex_lines: list[str], first_bad: Optional[int] = None) -> list[Step]:

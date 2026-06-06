@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import {
+  type CanvasIndex,
   type CanvasMeta,
   type Folder,
   type FolderId,
@@ -10,6 +11,7 @@ import {
   deleteItem,
   duplicateCanvas,
   folderPath,
+  getThumbnailUrl,
   listChildren,
   loadIndex,
   moveItem,
@@ -18,6 +20,8 @@ import {
   searchAll,
   subscribe,
 } from '../lib/canvasStore'
+import { deleteAccount, signOut } from '../lib/auth'
+import { AccountScreen, type AccountScreenId } from './AccountScreen'
 
 const STYLES = `
 .canvas-menu{
@@ -107,6 +111,9 @@ const STYLES = `
   display:inline-flex;align-items:center;justify-content:center;
   width:22px;height:22px;color:var(--ink-soft);flex-shrink:0;
 }
+.canvas-menu .sidebar-item.danger{color:var(--red)}
+.canvas-menu .sidebar-item.danger .sidebar-item-icon{color:var(--red)}
+.canvas-menu .sidebar-item.danger:hover{background:rgba(180,69,61,0.08)}
 .canvas-menu header.bar .search{
   flex:1;max-width:520px;display:flex;align-items:center;gap:10px;
   border:1.5px solid var(--ink);border-radius:999px;background:#fdfaf2;
@@ -138,18 +145,13 @@ const STYLES = `
   padding:4px 8px;border-radius:4px;
 }
 .canvas-menu .breadcrumbs button:hover{background:rgba(24,36,63,0.06);color:var(--ink)}
-.canvas-menu .breadcrumbs button.drop-target{
-  background:var(--accent);color:#fff;font-weight:600;
-  transform:scale(1.06);
-  box-shadow:0 2px 8px rgba(45,90,217,0.25);
-  transition:background .12s ease, transform .12s ease;
-}
 .canvas-menu .breadcrumbs .sep{color:var(--pencil)}
 .canvas-menu .breadcrumbs .current{color:var(--ink);font-weight:500;padding:4px 8px}
 
 .canvas-menu .grid{
   display:grid;
   grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+  align-items:start;
   gap:18px;
   padding:18px 0 80px;
 }
@@ -162,36 +164,8 @@ const STYLES = `
   box-shadow:3px 4px 0 rgba(24,36,63,0.06);
 }
 .canvas-menu .card:hover{transform:translate(-1px,-2px);box-shadow:5px 7px 0 rgba(24,36,63,0.08)}
-.canvas-menu .card.dragging{opacity:0.35;transform:scale(0.97)}
+.canvas-menu .card.dragging{opacity:0.4}
 .canvas-menu .card.drop-target{outline:2px dashed var(--accent);outline-offset:-4px}
-/* Folder-as-drop-target gets a stronger, "opening" treatment — the closed
-   folder SVG is swapped for an open variant by JS, and we layer a soft
-   accent ring + slight lift so it reads as "the folder is receiving". */
-.canvas-menu .card.drop-target.folder-target{
-  outline:none;
-  transform:translate(-1px,-3px) scale(1.02);
-  box-shadow:6px 8px 0 rgba(45,90,217,0.18), 0 0 0 2px var(--accent);
-}
-.canvas-menu .card.drop-target.folder-target .thumb.folder{
-  background:#e6f0ff;
-}
-
-/* Floating drag preview that follows the pointer while dragging. */
-.canvas-menu .drag-ghost{
-  position:fixed;z-index:200;pointer-events:none;
-  background:#fdfaf2;border:1.5px solid var(--ink);border-radius:8px;
-  padding:8px 14px 8px 12px;
-  display:flex;align-items:center;gap:10px;
-  box-shadow:5px 7px 0 rgba(24,36,63,0.18);
-  font-family:var(--ui);font-size:13px;font-weight:600;color:var(--ink);
-  max-width:240px;
-  transform:translate(8px,8px);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.canvas-menu .drag-ghost svg{flex-shrink:0;color:var(--ink-soft)}
-.canvas-menu .drag-ghost .name{
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
 
 .canvas-menu .thumb{
   height:140px;display:flex;align-items:center;justify-content:center;
@@ -208,10 +182,40 @@ const STYLES = `
 .canvas-menu .thumb .empty{
   font-family:var(--hand);font-size:22px;color:var(--pencil);transform:rotate(-2deg);
 }
-.canvas-menu .thumb.folder{
-  background:#f1ead4;
+/* Folders get a real folder silhouette: a tab on top + a manila body. */
+.canvas-menu .card.folder-card{
+  overflow:visible;
+  margin-top:14px;
+  background:#f3ecd6;
 }
-.canvas-menu .thumb.folder svg{width:64px;height:64px}
+.canvas-menu .card.folder-card::before{
+  content:"";position:absolute;left:16px;top:-14px;
+  width:42%;height:16px;
+  background:#f3ecd6;
+  border:1.5px solid var(--ink);border-bottom:none;
+  border-radius:7px 9px 0 0;
+  z-index:2;
+}
+.canvas-menu .thumb.folder{
+  height:126px;
+  position:relative;
+  background:#f3ecd6;
+  border-bottom:none;
+  border-radius:6.5px 6.5px 0 0;
+}
+.canvas-menu .folder-inside{position:absolute;inset:0}
+.canvas-menu .folder-inside .page{
+  position:absolute;left:50%;transform:translateX(-50%);
+  width:84%;height:56px;
+  background:#fffdf6;border:1.5px solid var(--ink);border-radius:4px 4px 0 0;
+}
+.canvas-menu .folder-inside .p1{top:24px;z-index:1;background:#f6efdd}
+.canvas-menu .folder-inside .p2{top:30px;z-index:2;background:#fbf6ea}
+.canvas-menu .folder-inside .p3{top:36px;z-index:3;background:#fffdf6}
+.canvas-menu .folder-inside .folder-front{
+  position:absolute;left:0;right:0;top:46px;bottom:0;
+  background:#f3ecd6;border-top:1.5px solid var(--ink);z-index:4;
+}
 
 .canvas-menu .card-body{
   padding:12px 14px;
@@ -280,45 +284,37 @@ type CanvasMenuProps = {
   onOpenCanvas: (id: string) => void
 }
 
+const EMPTY_INDEX: CanvasIndex = { version: 2, canvases: [], folders: [] }
+
 export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
-  const [version, setVersion] = useState(0)
+  const [index, setIndex] = useState<CanvasIndex>(EMPTY_INDEX)
+  const [indexLoaded, setIndexLoaded] = useState(false)
   const [parent, setParent] = useState<FolderId | null>(null)
   const [search, setSearch] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [accountScreen, setAccountScreen] = useState<AccountScreenId | null>(null)
   const [openMenuId, setOpenMenuId] = useState<ItemId | null>(null)
   const [renamingId, setRenamingId] = useState<ItemId | null>(null)
   const [draggingId, setDraggingId] = useState<ItemId | null>(null)
   const [dropTargetId, setDropTargetId] = useState<ItemId | null>(null)
   const [rootDropActive, setRootDropActive] = useState(false)
-  // Active breadcrumb drop target. 'root' is the sentinel for the
-  // "All canvases" button (maps to null in moveItem); a FolderId is the
-  // sentinel for a parent-folder breadcrumb.
-  const [dropBreadcrumb, setDropBreadcrumb] = useState<FolderId | 'root' | null>(null)
-  const [ghost, setGhost] = useState<{ x: number; y: number; name: string; kind: 'canvas' | 'folder' } | null>(null)
 
-  // Mutable drag state — read by the global pointer listeners. Declared here
-  // (above the items useMemo) so the in-render `xRef.current = x` sync below
-  // is type-legal. Initialized to null/empty; populated as the user drags.
-  type DragRefState = {
-    id: ItemId
-    pointerId: number
-    pointerType: string
-    startX: number
-    startY: number
-    longPressTimer: number | null
-    activated: boolean
-  }
-  const dragRef = useRef<DragRefState | null>(null)
-  const itemsRef = useRef<Item[]>([])
-  const parentRef = useRef<FolderId | null>(null)
-  const renamingIdRef = useRef<ItemId | null>(null)
-  const dropTargetIdRef = useRef<ItemId | null>(null)
-  const rootDropActiveRef = useRef(false)
-  const dropBreadcrumbRef = useRef<FolderId | 'root' | null>(null)
-  const justDraggedRef = useRef(false)
-
-  // Re-render whenever the store changes from anywhere.
-  useEffect(() => subscribe(() => setVersion((v) => v + 1)), [])
+  // Load the index on mount and whenever the store notifies a change.
+  useEffect(() => {
+    let cancelled = false
+    const reload = async () => {
+      const next = await loadIndex()
+      if (cancelled) return
+      setIndex(next)
+      setIndexLoaded(true)
+    }
+    void reload()
+    const unsub = subscribe(() => void reload())
+    return () => {
+      cancelled = true
+      unsub()
+    }
+  }, [])
 
   // Reset transient UI state when navigating between folders.
   useEffect(() => {
@@ -328,13 +324,11 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
     setDropTargetId(null)
   }, [parent])
 
-  // If the current parent folder gets deleted, fall back to root so we don't
-  // render an empty view forever. Re-checked on every store update.
+  // If the current parent folder gets deleted, fall back to root.
   useEffect(() => {
     if (parent == null) return
-    const idx = loadIndex()
-    if (!idx.folders.some((f) => f.id === parent)) setParent(null)
-  }, [parent, version])
+    if (!index.folders.some((f) => f.id === parent)) setParent(null)
+  }, [parent, index])
 
   // Close any open kebab menu when clicking outside the cards.
   useEffect(() => {
@@ -349,26 +343,19 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   }, [openMenuId])
 
   const items: Item[] = useMemo(() => {
-    return search.trim() ? searchAll(search) : listChildren(parent)
-    // version included so this recomputes after any store mutation.
-  }, [parent, search, version])
+    return search.trim() ? searchAll(index, search) : listChildren(index, parent)
+  }, [parent, search, index])
 
-  const path = useMemo(() => folderPath(parent), [parent, version])
+  const path = useMemo(() => folderPath(index, parent), [parent, index])
 
-  // Keep mirrored refs in sync with React state — the global pointer
-  // listeners read these without re-mounting the effect.
-  itemsRef.current = items
-  parentRef.current = parent
-  renamingIdRef.current = renamingId
-
-  const handleNewCanvas = useCallback(() => {
-    const meta = createCanvas(parent)
-    onOpenCanvas(meta.id)
+  const handleNewCanvas = useCallback(async () => {
+    const meta = await createCanvas(parent)
+    if (meta) onOpenCanvas(meta.id)
   }, [parent, onOpenCanvas])
 
-  const handleNewFolder = useCallback(() => {
-    const f = createFolder(parent)
-    setRenamingId(f.id)
+  const handleNewFolder = useCallback(async () => {
+    const f = await createFolder(parent)
+    if (f) setRenamingId(f.id)
   }, [parent])
 
   const handleOpen = useCallback((item: Item) => {
@@ -381,189 +368,54 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   }, [onOpenCanvas])
 
   // ---- drag-and-drop ----
-  // Pointer-events-based drag that works on mouse, touch, and Pencil.
-  //   • mouse:     activates as soon as the pointer moves ~6 px from down.
-  //   • touch/pen: activates after a 350 ms long-press, so taps and vertical
-  //                scroll-from-card-down still work (movement before the
-  //                timer cancels the pending drag).
-  // The runtime state lives in refs so the global pointermove/up handlers
-  // can read it without restaging the effect on every move; useState mirrors
-  // only the pieces that need to drive re-renders.
-  const LONG_PRESS_MS = 350
-  const ACTIVATION_TOLERANCE_PX = 6
-
-  const activateDrag = useCallback((item: Item, x: number, y: number) => {
-    if (!dragRef.current) return
-    dragRef.current.activated = true
-    justDraggedRef.current = true
-    setDraggingId(item.id)
-    setGhost({ x, y, name: item.name, kind: item.kind })
-  }, [])
-
-  const resetDrag = useCallback(() => {
-    const drag = dragRef.current
-    if (drag?.longPressTimer != null) window.clearTimeout(drag.longPressTimer)
-    dragRef.current = null
+  const onDragStart = (id: ItemId) => (e: React.DragEvent) => {
+    setDraggingId(id)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', id)
+  }
+  const onDragEnd = () => {
     setDraggingId(null)
     setDropTargetId(null)
     setRootDropActive(false)
-    setDropBreadcrumb(null)
-    setGhost(null)
-    dropTargetIdRef.current = null
-    rootDropActiveRef.current = false
-    dropBreadcrumbRef.current = null
-  }, [])
-
-  const onCardPointerDown = useCallback((item: Item) => (e: React.PointerEvent) => {
-    // Ignore right-click and middle-click. Renaming input owns its own
-    // pointer interactions and shouldn't start a drag.
-    if (e.pointerType === 'mouse' && e.button !== 0) return
-    if (renamingIdRef.current === item.id) return
-
-    dragRef.current = {
-      id: item.id,
-      pointerId: e.pointerId,
-      pointerType: e.pointerType,
-      startX: e.clientX,
-      startY: e.clientY,
-      longPressTimer: null,
-      activated: false,
-    }
-    justDraggedRef.current = false
-
-    // Touch/pen → wait for the long-press timer. Mouse activates on movement
-    // (handled in the global pointermove listener), giving snappy desktop UX.
-    if (e.pointerType !== 'mouse') {
-      dragRef.current.longPressTimer = window.setTimeout(() => {
-        if (dragRef.current?.id === item.id && !dragRef.current.activated) {
-          activateDrag(item, dragRef.current.startX, dragRef.current.startY)
-        }
-      }, LONG_PRESS_MS)
-    }
-  }, [activateDrag])
-
-  // Block the synthetic click that follows a drag-completing pointerup, so
-  // we don't accidentally open the source item right after dropping it.
-  const onCardClickGuard = useCallback((e: React.MouseEvent) => {
-    if (justDraggedRef.current) {
-      justDraggedRef.current = false
-      e.stopPropagation()
-      e.preventDefault()
-    }
-  }, [])
-
-  // Global pointermove / pointerup / pointercancel — mounted once.
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      const drag = dragRef.current
-      if (!drag || e.pointerId !== drag.pointerId) return
-
-      const dist = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY)
-
-      if (!drag.activated) {
-        if (drag.pointerType === 'mouse' && dist > ACTIVATION_TOLERANCE_PX) {
-          const item = itemsRef.current.find((i) => i.id === drag.id)
-          if (item) activateDrag(item, e.clientX, e.clientY)
-        } else if (drag.pointerType !== 'mouse' && dist > ACTIVATION_TOLERANCE_PX) {
-          // Pre-activation movement on touch/pen = user is scrolling, not
-          // dragging. Tear down the pending drag and let the OS scroll.
-          resetDrag()
-        }
+  }
+  const onDragOverItem = (item: Item) => (e: React.DragEvent) => {
+    if (!draggingId || draggingId === item.id) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDropTargetId(item.id)
+  }
+  const onDragLeaveItem = () => setDropTargetId(null)
+  const onDropItem = (item: Item) => (e: React.DragEvent) => {
+    e.preventDefault()
+    if (!draggingId || draggingId === item.id) return
+    if (item.kind === 'folder') {
+      void moveItem(draggingId, item.id)
+    } else {
+      const currentChildren = listChildren(index, parent).map((x) => x.id)
+      const fromIdx = currentChildren.indexOf(draggingId)
+      const toIdx = currentChildren.indexOf(item.id)
+      if (fromIdx === -1 || toIdx === -1) {
+        onDragEnd()
         return
       }
-
-      // --- drag active ---
-      // Suppress the OS-default scroll so the page doesn't move while the
-      // finger drags a card. Once the user lifts, scroll resumes normally.
-      e.preventDefault()
-      setGhost((g) => (g ? { ...g, x: e.clientX, y: e.clientY } : g))
-
-      // Hit-test by asking the document what's under the pointer. Cards,
-      // breadcrumb buttons, and the root-drop zone advertise themselves
-      // with data attributes. Order matters: breadcrumbs sit on top of the
-      // card grid, so they must be checked before falling through to cards.
-      const el = document.elementFromPoint(e.clientX, e.clientY)
-      let newDropId: ItemId | null = null
-      let newRootActive = false
-      let newBreadcrumb: FolderId | 'root' | null = null
-      if (el) {
-        const root = el.closest('[data-root-drop]') as HTMLElement | null
-        const breadcrumb = el.closest('[data-breadcrumb-target]') as HTMLElement | null
-        const card = el.closest('[data-card-id]') as HTMLElement | null
-        if (root) {
-          newRootActive = true
-        } else if (breadcrumb) {
-          const raw = breadcrumb.getAttribute('data-breadcrumb-target') ?? ''
-          newBreadcrumb = raw === 'root' ? 'root' : (raw as FolderId)
-        } else if (card) {
-          const id = card.getAttribute('data-card-id') as ItemId
-          if (id !== drag.id) newDropId = id
-        }
-      }
-      if (newDropId !== dropTargetIdRef.current) {
-        dropTargetIdRef.current = newDropId
-        setDropTargetId(newDropId)
-      }
-      if (newRootActive !== rootDropActiveRef.current) {
-        rootDropActiveRef.current = newRootActive
-        setRootDropActive(newRootActive)
-      }
-      if (newBreadcrumb !== dropBreadcrumbRef.current) {
-        dropBreadcrumbRef.current = newBreadcrumb
-        setDropBreadcrumb(newBreadcrumb)
-      }
+      const reordered = [...currentChildren]
+      reordered.splice(fromIdx, 1)
+      reordered.splice(toIdx, 0, draggingId)
+      void reorderItems(parent, reordered)
     }
-
-    const onUp = (e: PointerEvent) => {
-      const drag = dragRef.current
-      if (!drag || e.pointerId !== drag.pointerId) return
-
-      if (drag.activated) {
-        const targetId = dropTargetIdRef.current
-        if (rootDropActiveRef.current) {
-          moveItem(drag.id, null)
-        } else if (dropBreadcrumbRef.current) {
-          // Drop on a breadcrumb — moves the item out to the named ancestor
-          // (root for the "All canvases" sentinel, a FolderId otherwise).
-          const t = dropBreadcrumbRef.current
-          moveItem(drag.id, t === 'root' ? null : t)
-        } else if (targetId) {
-          const target = itemsRef.current.find((i) => i.id === targetId)
-          if (target) {
-            if (target.kind === 'folder') {
-              moveItem(drag.id, target.id)
-            } else {
-              // Reorder within the current parent — insert at the target's
-              // index, matching the previous HTML5-D&D semantics.
-              const children = listChildren(parentRef.current).map((x) => x.id)
-              const fromIdx = children.indexOf(drag.id)
-              const toIdx = children.indexOf(target.id)
-              if (fromIdx !== -1 && toIdx !== -1) {
-                const reordered = [...children]
-                reordered.splice(fromIdx, 1)
-                reordered.splice(toIdx, 0, drag.id)
-                reorderItems(parentRef.current, reordered)
-              }
-            }
-          }
-        }
-      }
-      resetDrag()
-    }
-
-    const onCancel = (e: PointerEvent) => {
-      if (dragRef.current && e.pointerId === dragRef.current.pointerId) resetDrag()
-    }
-
-    document.addEventListener('pointermove', onMove, { passive: false })
-    document.addEventListener('pointerup', onUp)
-    document.addEventListener('pointercancel', onCancel)
-    return () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-      document.removeEventListener('pointercancel', onCancel)
-    }
-  }, [activateDrag, resetDrag])
+    onDragEnd()
+  }
+  const onDragOverRoot = (e: React.DragEvent) => {
+    if (!draggingId) return
+    e.preventDefault()
+    setRootDropActive(true)
+  }
+  const onDropToRoot = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (!draggingId) return
+    void moveItem(draggingId, null)
+    onDragEnd()
+  }
 
   return (
     <div className="canvas-menu">
@@ -603,10 +455,10 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
         </div>
 
         <div className="actions">
-          <button className="btn ghost" onClick={handleNewFolder}>
+          <button className="btn ghost" onClick={() => void handleNewFolder()}>
             <FolderPlusIcon /> New folder
           </button>
-          <button className="btn" onClick={handleNewCanvas}>
+          <button className="btn" onClick={() => void handleNewCanvas()}>
             <PlusIcon /> New canvas
           </button>
         </div>
@@ -615,40 +467,29 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
       <main className="container">
         {!search && (
           <nav className="breadcrumbs" aria-label="Breadcrumbs">
-            <button
-              onClick={() => setParent(null)}
-              data-breadcrumb-target={parent !== null ? 'root' : undefined}
-              className={dropBreadcrumb === 'root' ? 'drop-target' : ''}
-            >
-              All canvases
-            </button>
+            <button onClick={() => setParent(null)}>All canvases</button>
             {path.map((f, i) => (
               <span key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span className="sep">/</span>
                 {i === path.length - 1 ? (
                   <span className="current">{f.name}</span>
                 ) : (
-                  <button
-                    onClick={() => setParent(f.id)}
-                    data-breadcrumb-target={f.id}
-                    className={dropBreadcrumb === f.id ? 'drop-target' : ''}
-                  >
-                    {f.name}
-                  </button>
+                  <button onClick={() => setParent(f.id)}>{f.name}</button>
                 )}
               </span>
             ))}
           </nav>
         )}
 
-        {items.length === 0 ? (
-          <EmptyState searching={!!search.trim()} onNewCanvas={handleNewCanvas} />
+        {!indexLoaded ? null : items.length === 0 ? (
+          <EmptyState searching={!!search.trim()} onNewCanvas={() => void handleNewCanvas()} />
         ) : (
           <div className="grid">
             {items.map((item) => (
               <Card
                 key={item.id}
                 item={item}
+                index={index}
                 isDragging={draggingId === item.id}
                 isDropTarget={dropTargetId === item.id && draggingId !== item.id}
                 isRenaming={renamingId === item.id}
@@ -656,23 +497,26 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
                 showLocation={!!search}
                 onOpen={() => handleOpen(item)}
                 onRequestRename={() => setRenamingId(item.id)}
-                onCommitRename={(name) => { renameItem(item.id, name); setRenamingId(null) }}
+                onCommitRename={(name) => { void renameItem(item.id, name); setRenamingId(null) }}
                 onCancelRename={() => setRenamingId(null)}
                 onToggleMenu={() => setOpenMenuId((cur) => cur === item.id ? null : item.id)}
                 onDelete={() => {
                   const label = item.kind === 'folder' ? `the folder "${item.name}" and everything inside it` : `"${item.name}"`
                   if (confirm(`Delete ${label}? This can't be undone.`)) {
-                    deleteItem(item.id)
+                    void deleteItem(item.id)
                     setOpenMenuId(null)
                   }
                 }}
                 onDuplicate={() => {
                   if (item.kind !== 'canvas') return
-                  duplicateCanvas(item.id)
+                  void duplicateCanvas(item.id)
                   setOpenMenuId(null)
                 }}
-                onPointerDown={onCardPointerDown(item)}
-                onClickCapture={onCardClickGuard}
+                onDragStart={onDragStart(item.id)}
+                onDragEnd={onDragEnd}
+                onDragOver={onDragOverItem(item)}
+                onDragLeave={onDragLeaveItem}
+                onDrop={onDropItem(item)}
               />
             ))}
           </div>
@@ -680,39 +524,47 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
 
         {!search && parent != null && (
           <div
-            data-root-drop=""
             className={`root-drop ${rootDropActive ? 'active' : ''}`}
+            onDragOver={onDragOverRoot}
+            onDragLeave={() => setRootDropActive(false)}
+            onDrop={onDropToRoot}
           >
             ↑ drag here to move to All canvases
           </div>
         )}
       </main>
 
-      {ghost && (
-        <div
-          className="drag-ghost"
-          style={{ left: ghost.x, top: ghost.y }}
-          aria-hidden
-        >
-          {ghost.kind === 'folder' ? <GhostFolderIcon /> : <GhostCanvasIcon />}
-          <span className="name">{ghost.name}</span>
-        </div>
-      )}
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onOpenScreen={(id) => { setSidebarOpen(false); setAccountScreen(id) }}
+        onSignOut={() => { setSidebarOpen(false); void signOut() }}
+        onDeleteAccount={async () => {
+          if (!confirm('Permanently delete your account and every canvas, folder, and chat? This cannot be undone.')) return
+          const err = await deleteAccount()
+          if (err) alert(err)
+          // On success, the auth state change routes back to the sign-in screen.
+        }}
+      />
 
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <AccountScreen screen={accountScreen} onClose={() => setAccountScreen(null)} />
     </div>
   )
 }
 
-const SIDEBAR_ITEMS = [
-  { label: 'Profile', icon: ProfileIcon },
-  { label: 'Settings', icon: SettingsIcon },
-  { label: 'Payments', icon: PaymentsIcon },
-  { label: 'Help & Support', icon: HelpIcon },
-  { label: 'Sign Out', icon: SignOutIcon },
-]
-
-function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+function Sidebar({
+  open,
+  onClose,
+  onOpenScreen,
+  onSignOut,
+  onDeleteAccount,
+}: {
+  open: boolean
+  onClose: () => void
+  onOpenScreen: (id: AccountScreenId) => void
+  onSignOut: () => void
+  onDeleteAccount: () => void
+}) {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
@@ -721,6 +573,15 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [open, onClose])
+
+  const items: { label: string; icon: ComponentType; onClick?: () => void; danger?: boolean }[] = [
+    { label: 'Profile', icon: ProfileIcon, onClick: () => onOpenScreen('profile') },
+    { label: 'Settings', icon: SettingsIcon, onClick: () => onOpenScreen('settings') },
+    { label: 'Payments', icon: PaymentsIcon, onClick: () => onOpenScreen('payments') },
+    { label: 'Help & Support', icon: HelpIcon, onClick: () => onOpenScreen('help') },
+    { label: 'Sign Out', icon: SignOutIcon, onClick: onSignOut },
+    { label: 'Delete Account', icon: TrashIcon, onClick: onDeleteAccount, danger: true },
+  ]
 
   return (
     <>
@@ -742,8 +603,13 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
         <nav className="sidebar-nav">
-          {SIDEBAR_ITEMS.map((item) => (
-            <button key={item.label} type="button" className="sidebar-item">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={`sidebar-item ${item.danger ? 'danger' : ''}`}
+              onClick={item.onClick}
+            >
               <span className="sidebar-item-icon"><item.icon /></span>
               <span>{item.label}</span>
             </button>
@@ -760,6 +626,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 type CardProps = {
   item: Item
+  index: CanvasIndex
   isDragging: boolean
   isDropTarget: boolean
   isRenaming: boolean
@@ -772,12 +639,16 @@ type CardProps = {
   onToggleMenu: () => void
   onDelete: () => void
   onDuplicate: () => void
-  onPointerDown: (e: React.PointerEvent) => void
-  onClickCapture: (e: React.MouseEvent) => void
+  onDragStart: (e: React.DragEvent) => void
+  onDragEnd: () => void
+  onDragOver: (e: React.DragEvent) => void
+  onDragLeave: () => void
+  onDrop: (e: React.DragEvent) => void
 }
 
 function Card({
   item,
+  index,
   isDragging,
   isDropTarget,
   isRenaming,
@@ -790,24 +661,27 @@ function Card({
   onToggleMenu,
   onDelete,
   onDuplicate,
-  onPointerDown,
-  onClickCapture,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: CardProps) {
   const isFolder = item.kind === 'folder'
-  // Folder drop-targets get the "opening" treatment — swap the closed folder
-  // SVG for an open variant and let the CSS layer the scale/ring effect.
-  const isFolderTarget = isFolder && isDropTarget
   return (
     <div
-      data-card-id={item.id}
-      className={`card ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''} ${isFolderTarget ? 'folder-target' : ''}`}
-      onPointerDown={onPointerDown}
-      onClickCapture={onClickCapture}
+      className={`card ${isFolder ? 'folder-card' : ''} ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''}`}
+      draggable={!isRenaming}
       onClick={() => { if (!isRenaming) onOpen() }}
       onDoubleClick={(e) => { e.stopPropagation(); onRequestRename() }}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <div className={`thumb ${isFolder ? 'folder' : ''}`}>
-        {isFolder ? (isFolderTarget ? <OpenFolderArt /> : <FolderArt />) : <CanvasThumb canvas={item as CanvasMeta} />}
+        {isFolder ? <FolderSheets index={index} folder={item as Folder} /> : <CanvasThumb canvas={item as CanvasMeta} />}
       </div>
       <div className="card-body">
         <div className="card-name">
@@ -819,9 +693,9 @@ function Card({
         </div>
         <div className="card-meta">
           {showLocation
-            ? locationLabel(item)
+            ? locationLabel(index, item)
             : isFolder
-              ? folderChildLabel(item as Folder)
+              ? folderChildLabel(index, item as Folder)
               : modifiedLabel(item.modifiedAt)}
         </div>
       </div>
@@ -874,85 +748,42 @@ function RenameInput({
 }
 
 function CanvasThumb({ canvas }: { canvas: CanvasMeta }) {
-  if (canvas.thumbnail) {
-    return <img src={canvas.thumbnail} alt="" />
-  }
+  // Track which thumbnail_path the resolved URL belongs to so navigating to
+  // a canvas without a thumbnail doesn't show a stale image from a previous one.
+  const [resolved, setResolved] = useState<{ path: string; url: string | null }>(
+    { path: '', url: null },
+  )
+  const path = canvas.thumbnailPath ?? ''
+  useEffect(() => {
+    if (!path) return
+    let cancelled = false
+    void getThumbnailUrl(canvas).then((url) => {
+      if (!cancelled) setResolved({ path, url })
+    })
+    return () => { cancelled = true }
+  }, [canvas, path])
+
+  const url = resolved.path === path ? resolved.url : null
+  if (url) return <img src={url} alt="" />
   return <span className="empty">empty page</span>
 }
 
-function FolderArt() {
+function FolderSheets({ index, folder }: { index: CanvasIndex; folder: Folder }) {
+  const count = listChildren(index, folder.id).length
+  if (count === 0) return <span className="empty">empty folder</span>
+  // A few wide page-edges tucked behind the folder's front, peeking near the top.
+  const layout: Record<number, string[]> = {
+    1: ['p3'],
+    2: ['p2', 'p3'],
+    3: ['p1', 'p2', 'p3'],
+  }
   return (
-    <svg viewBox="0 0 64 64" fill="none">
-      <path
-        d="M 6 18 L 6 52 Q 6 56 10 56 L 54 56 Q 58 56 58 52 L 58 22 Q 58 18 54 18 L 30 18 L 24 12 L 10 12 Q 6 12 6 18 Z"
-        stroke="#18243f"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="#fdfaf2"
-      />
-      <path d="M 14 30 L 50 30" stroke="#d9cfb6" strokeWidth="1.5" strokeDasharray="3 4" />
-    </svg>
-  )
-}
-
-/** Open-folder variant — the back panel stays put while the front flap is
- *  sheared forward, suggesting the folder is receiving the dragged item.
- *  Used in place of FolderArt when a folder is the active drop target. */
-function OpenFolderArt() {
-  return (
-    <svg viewBox="0 0 64 64" fill="none">
-      {/* back panel of the open folder */}
-      <path
-        d="M 6 22 L 6 52 Q 6 56 10 56 L 54 56 Q 58 56 58 52 L 58 26 Q 58 22 54 22 L 30 22 L 24 16 L 10 16 Q 6 16 6 22 Z"
-        stroke="#18243f"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="#e6f0ff"
-      />
-      {/* sheets peeking out the top of the folder */}
-      <path
-        d="M 14 24 L 14 18 L 46 18 L 46 24"
-        stroke="#2d5ad9"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="#fdfaf2"
-      />
-      {/* front flap, leaned slightly forward */}
-      <path
-        d="M 4 30 L 14 56 L 58 56 L 60 30 Z"
-        stroke="#18243f"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="#fdfaf2"
-      />
-    </svg>
-  )
-}
-
-/** Compact folder icon used inside the floating drag-ghost chip. */
-function GhostFolderIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-      <path
-        d="M 2 6 L 2 16 Q 2 17 3 17 L 17 17 Q 18 17 18 16 L 18 8 Q 18 7 17 7 L 9 7 L 7 5 L 3 5 Q 2 5 2 6 Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-    </svg>
-  )
-}
-
-/** Compact canvas icon used inside the floating drag-ghost chip. */
-function GhostCanvasIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-      <rect x="3.5" y="2.5" width="13" height="15" rx="1" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M 6.5 7 L 13.5 7 M 6.5 10 L 13.5 10 M 6.5 13 L 11 13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
+    <div className="folder-inside" aria-hidden="true">
+      {layout[Math.min(count, 3)].map((c) => (
+        <span key={c} className={`page ${c}`} />
+      ))}
+      <div className="folder-front" />
+    </div>
   )
 }
 
@@ -992,8 +823,8 @@ function modifiedLabel(ts: number): string {
   return new Date(ts).toLocaleDateString()
 }
 
-function folderChildLabel(folder: Folder): string {
-  const kids = listChildren(folder.id)
+function folderChildLabel(index: CanvasIndex, folder: Folder): string {
+  const kids = listChildren(index, folder.id)
   if (kids.length === 0) return 'empty folder'
   const c = kids.filter((k) => k.kind === 'canvas').length
   const f = kids.filter((k) => k.kind === 'folder').length
@@ -1003,8 +834,8 @@ function folderChildLabel(folder: Folder): string {
   return parts.join(' · ')
 }
 
-function locationLabel(item: Item): string {
-  const path = folderPath(item.parent)
+function locationLabel(index: CanvasIndex, item: Item): string {
+  const path = folderPath(index, item.parent)
   if (path.length === 0) return 'in All canvases'
   return 'in ' + path.map((p) => p.name).join(' / ')
 }
@@ -1094,6 +925,15 @@ function SignOutIcon() {
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
       <path d="M 11 3 L 4 3 Q 3 3 3 4 L 3 16 Q 3 17 4 17 L 11 17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       <path d="M 8 10 L 17 10 M 14 7 L 17 10 L 14 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+function TrashIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+      <path d="M 4 6 L 16 6 M 8 6 L 8 4 Q 8 3.5 8.5 3.5 L 11.5 3.5 Q 12 3.5 12 4 L 12 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M 5.6 6 L 6.3 16 Q 6.35 16.7 7 16.7 L 13 16.7 Q 13.65 16.7 13.7 16 L 14.4 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M 8.6 9 L 8.8 14 M 11.4 9 L 11.2 14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   )
 }

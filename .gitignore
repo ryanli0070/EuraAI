@@ -24,6 +24,9 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/
+.agents/
+.mcp.json
+skills-lock.json
 
 # Local DB (Phase 6 debug log)
 *.sqlite

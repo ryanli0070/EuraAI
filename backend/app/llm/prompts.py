@@ -17,12 +17,42 @@ _TRANSCRIPTION_RULES = """TRANSCRIPTION — be faithful: do NOT introduce variab
 - Before locking in your transcription, mentally check: do the steps you wrote in `steps[*].latex` form a coherent chain in the SAME problem? If not, you probably misread a digit or operator — re-read the image."""
 
 
-_MULTI_PROBLEM_RULE = """MULTIPLE PROBLEMS: The canvas may contain several separate, independent problems. Each problem must be evaluated on its own — do NOT compare steps across different problems. A step is only invalid if it fails to follow from the immediately preceding step of the SAME problem."""
+_MULTI_PROBLEM_RULE = """MULTI-PROBLEM DETECTION — read this carefully. Wrong multi-problem classification is the single most common source of incorrect "all_correct" verdicts on this canvas.
+
+HARD RULE: Two consecutive lines belong to the SAME problem unless ALL THREE of the following are simultaneously true:
+  1. They share NO variables — the first uses only `x`, the next uses only `y`, with zero overlap. AND
+  2. There is clearly visible blank space, a column break, or a different region of the canvas between them. AND
+  3. Neither line is plausibly an algebraic transformation of the other.
+
+If you cannot say all three are clearly true, the lines are the SAME problem. Default to same.
+
+ANY SHARED VARIABLE between two consecutive lines means they are part of the SAME problem. This single criterion is decisive almost every time. A column of equations all containing `x` is ONE chained derivation.
+
+A step is invalid ONLY if it fails to follow from the preceding step of the SAME problem. Across separate problems, do not compare.
+
+FAILURE MODE TO AVOID (exemplar — do NOT do this):
+A student writes a column of three lines like:
+  `7x - 3 = 4`
+  `7x = 1`     ← WRONG: this should be `7x = 7` (add 3 to both sides). The student subtracted 3 from 4 instead of adding 3.
+  `x = 1/7`    ← propagated wrongness — algebraically follows from the wrong line 2.
+
+All three lines share `x`. They are ONE problem. The correct verdict is `first_error_index=1`, `all_correct=false`. It is WRONG to declare these three lines as three independent one-line "problems" each individually correct. That is the failure mode this rule exists to prevent."""
 
 
 _CORRECTNESS_STANDARD = """DECIDING CORRECTNESS (apply this identically every time, regardless of how you phrase your response):
-- A step is wrong ONLY if it fails to follow from the immediately preceding step of the same problem. If every step follows correctly from the previous one, the work is correct: set all_correct=true and first_error_index=null.
-- Before marking any step invalid, verify the algebra yourself. A correct answer reached by an unconventional method is still correct — do not flag a valid manipulation just because it is not the move you would have made.
+
+PROCEDURE — perform this verification BEFORE setting `all_correct`. Do not skip:
+For each consecutive pair within the same problem (step i-1 → step i):
+  (a) Derive step i from step i-1 yourself using valid algebra. Write the derived form in your head.
+  (b) Compare your derivation against the student's step i.
+  (c) If they match (up to equivalent algebraic form), the transition is valid — move on to the next pair.
+  (d) If they do NOT match, the transition is INVALID. Set `first_error_index = i` and stop searching further pairs.
+
+Set `all_correct=true` ONLY when every consecutive transition above is valid. NEVER declare `all_correct=true` on a multi-line problem without having executed this check mentally for each pair. A "looks correct at a glance" assessment is not sufficient.
+
+GENERAL RULES:
+- A step is wrong ONLY if it fails to follow from the immediately preceding step of the same problem.
+- A correct answer reached by an unconventional method is still correct — do not flag a valid manipulation just because it is not the move you would have made.
 - Algebra and symbol manipulation are held to the same standard as arithmetic: neither stricter nor more lenient.
 - When in doubt about whether a step is valid, re-derive it. Do not report an error you cannot concretely justify."""
 

@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   Copy,
   Eraser,
+  FilePlus,
   Hand,
   Maximize2,
   Minimize2,
@@ -20,8 +21,9 @@ import {
   loadChat as loadCanvasChat,
   saveChat as saveCanvasChat,
   setThumbnail,
-  touchCanvas,
 } from '../lib/canvasStore'
+import { apiFetch } from '../lib/api'
+import { getShowGrid, subscribeSettings } from '../lib/settings'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -39,7 +41,6 @@ type HelpApiResponse = {
   status: 'ok' | 'all_correct' | 'no_math' | 'error'
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 const MIN_W = 260
 const MIN_H = 180
 
@@ -76,14 +77,6 @@ const COLORS: { value: string; css: string; label: string }[] = [
 ]
 
 
-// Chat state is persisted per-canvas via canvasStore; here we just merge the
-// loaded box against current defaults so older shapes pick up new fields.
-function loadInitialChat(canvasId: string): { latex: string; messages: ChatMessage[]; box: ChatBox } {
-  const stored = loadCanvasChat(canvasId)
-  const box: ChatBox = { ...defaultBox(), ...(stored.box ?? {}) }
-  return { latex: stored.latex, messages: stored.messages, box }
-}
-
 const DEFAULT_ENGINE_STATE: EngineState = {
   tool: 'draw',
   color: '#1d1d1d',
@@ -91,6 +84,9 @@ const DEFAULT_ENGINE_STATE: EngineState = {
   canRedo: false,
   isEmpty: true,
   hasSelection: false,
+  pull: 0,
+  page: 0,
+  pageCount: 1,
 }
 
 export function Whiteboard({
@@ -102,21 +98,29 @@ export function Whiteboard({
 }) {
   const engineRef = useRef<WhiteboardEngine | null>(null)
   const checkMenuRef = useRef<HTMLDivElement | null>(null)
-  const initial = useMemo(() => loadInitialChat(canvasId), [canvasId])
-  const [latex, setLatex] = useState<string>(initial.latex)
-  const [messages, setMessages] = useState<ChatMessage[]>(initial.messages)
+  const [latex, setLatex] = useState<string>('')
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [checkStatus, setCheckStatus] = useState<CheckStatus>('idle')
   const [showCheckMenu, setShowCheckMenu] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [box, setBox] = useState<ChatBox>(() => initial.box ?? defaultBox())
+  const [box, setBox] = useState<ChatBox>(defaultBox)
+  const [chatReady, setChatReady] = useState(false)
   const [showColorPanel, setShowColorPanel] = useState(false)
   const [engineState, setEngineState] = useState<EngineState>(DEFAULT_ENGINE_STATE)
 
   const handleMount = useCallback((engine: WhiteboardEngine) => {
     engineRef.current = engine
+    engine.setShowGrid(getShowGrid())
     setEngineState(engine.getState())
     engine.subscribe(() => setEngineState(engine.getState()))
+  }, [])
+
+  // Keep the live page's grid in sync with the Settings toggle.
+  useEffect(() => {
+    return subscribeSettings(() => {
+      engineRef.current?.setShowGrid(getShowGrid())
+    })
   }, [])
 
   const handleSelectTool = useCallback((tool: ToolId) => {
@@ -137,10 +141,29 @@ export function Whiteboard({
     return () => document.body.classList.remove('whiteboard-mode')
   }, [])
 
+  // Load chat state from the backend on canvas change. Reset the ready flag
+  // first so we don't overwrite the incoming load with stale (or empty) state
+  // via the save effect below.
   useEffect(() => {
+    let cancelled = false
+    setChatReady(false)
+    setLatex('')
+    setMessages([])
+    setBox(defaultBox())
+    void loadCanvasChat(canvasId).then((stored) => {
+      if (cancelled) return
+      setLatex(stored.latex)
+      setMessages(stored.messages)
+      setBox({ ...defaultBox(), ...(stored.box ?? {}) })
+      setChatReady(true)
+    })
+    return () => { cancelled = true }
+  }, [canvasId])
+
+  useEffect(() => {
+    if (!chatReady) return
     saveCanvasChat(canvasId, { latex, messages, box })
-    touchCanvas(canvasId)
-  }, [canvasId, latex, messages, box])
+  }, [canvasId, latex, messages, box, chatReady])
 
   const appendMessage = useCallback((m: ChatMessage) => {
     setMessages((prev) => [...prev, m])
@@ -182,7 +205,7 @@ export function Whiteboard({
         setCheckStatus('no_math')
         return
       }
-      const res = await fetch(`${API_BASE_URL}/api/check`, { method: 'POST', body: formData })
+      const res = await apiFetch('/api/check', { method: 'POST', body: formData })
       if (!res.ok) throw new Error(`Server responded ${res.status}`)
       const data = (await res.json()) as CheckResponse
       if (data.latex) setLatex(data.latex)
@@ -208,7 +231,7 @@ export function Whiteboard({
         setCheckStatus('no_math')
         return
       }
-      const res = await fetch(`${API_BASE_URL}/api/help`, { method: 'POST', body: formData })
+      const res = await apiFetch('/api/help', { method: 'POST', body: formData })
       if (!res.ok) throw new Error(`Server responded ${res.status}`)
       const data = (await res.json()) as HelpApiResponse
       if (data.latex) setLatex(data.latex)
@@ -233,7 +256,7 @@ export function Whiteboard({
     const nextHistory: ChatMessage[] = [...messages, { role: 'user', text: question }]
     setMessages(nextHistory)
     try {
-      const res = await fetch(`${API_BASE_URL}/api/chat`, {
+      const res = await apiFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -258,25 +281,17 @@ export function Whiteboard({
   }, [appendMessage, input, latex, messages, sending])
 
   // Capture a small thumbnail before leaving so the menu shows a recognizable
-  // preview. Best-effort: fall back to clearing the thumbnail if capture fails
-  // or the canvas is empty, so a now-empty canvas doesn't keep a stale image.
+  // preview. Best-effort: clear the thumbnail if capture fails or the canvas
+  // is empty, so a now-empty canvas doesn't keep a stale image.
   const handleHome = useCallback(async () => {
     const engine = engineRef.current
     if (engine) {
       try {
         if (engine.isEmpty()) {
-          setThumbnail(canvasId, undefined)
+          await setThumbnail(canvasId, null)
         } else {
           const blob = await engine.toImage({ padding: 16, scale: 0.5, background: true })
-          if (blob) {
-            const dataUrl = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader()
-              reader.onload = () => resolve(reader.result as string)
-              reader.onerror = () => reject(reader.error)
-              reader.readAsDataURL(blob)
-            })
-            setThumbnail(canvasId, dataUrl)
-          }
+          if (blob) await setThumbnail(canvasId, blob)
         }
       } catch (err) {
         console.warn('[EuraAI] thumbnail capture failed', err)
@@ -291,9 +306,24 @@ export function Whiteboard({
     setCheckStatus('idle')
   }, [])
 
+  const handleDeletePage = useCallback(() => {
+    engineRef.current?.deletePage()
+  }, [])
+
   return (
     <div className="fixed inset-0">
       <Canvas canvasId={canvasId} onMount={handleMount} />
+
+      {engineState.pull > 0 && <PullToAddPage progress={engineState.pull} />}
+
+      {engineState.pageCount > 1 && (
+        <PageControls
+          key={`${engineState.page}-${engineState.pageCount}`}
+          page={engineState.page}
+          count={engineState.pageCount}
+          onDelete={handleDeletePage}
+        />
+      )}
 
       <Toolbar
         state={engineState}
@@ -458,6 +488,113 @@ function HomeButton({ onHome }: { onHome?: () => void }) {
       <ChevronLeft className="h-4 w-4" strokeWidth={2.25} />
       <span className="leading-none">Home</span>
     </button>
+  )
+}
+
+/**
+ * GoodNotes-style affordance shown while the user drags past the last page.
+ * A ring fills as they pull; at 100% the copy flips to "release to add page".
+ * Purely decorative — pointer-events are off so it never eats the drag.
+ */
+function PullToAddPage({ progress }: { progress: number }) {
+  const p = Math.min(1, Math.max(0, progress))
+  const ready = p >= 1
+  const r = 22
+  const circumference = 2 * Math.PI * r
+  const accent = ready ? '#16a34a' : '#2563eb'
+
+  return (
+    <div className="pointer-events-none absolute right-6 top-1/2 z-[1000] -translate-y-1/2">
+      <div
+        className="flex w-28 flex-col items-center gap-2 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-3 text-center shadow-xl backdrop-blur"
+        style={{ transform: `scale(${0.92 + 0.08 * p})` }}
+      >
+        <div className="relative flex h-13 w-13 items-center justify-center" style={{ height: 52, width: 52 }}>
+          <svg className="absolute inset-0 -rotate-90" width="52" height="52" viewBox="0 0 52 52">
+            <circle cx="26" cy="26" r={r} fill="none" stroke="#e5e7eb" strokeWidth="3" />
+            <circle
+              cx="26"
+              cy="26"
+              r={r}
+              fill="none"
+              stroke={accent}
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={circumference * (1 - p)}
+              style={{ transition: 'stroke-dashoffset 60ms linear' }}
+            />
+          </svg>
+          <FilePlus className="h-5 w-5" strokeWidth={2.25} style={{ color: accent }} />
+        </div>
+        <span className="text-xs font-semibold leading-tight" style={{ color: ready ? '#16a34a' : '#6b7280' }}>
+          {ready ? 'Release to add page' : 'Keep pulling…'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Bottom-center page pill ("Page X / N") with a delete-page button. Deleting
+ * asks for confirmation first, since it discards a whole sheet of work.
+ */
+function PageControls({
+  page,
+  count,
+  onDelete,
+}: {
+  page: number
+  count: number
+  onDelete: () => void
+}) {
+  // Confirm state resets when page/count changes: the parent keys this element
+  // on both, so a swipe or delete remounts it fresh.
+  const [confirming, setConfirming] = useState(false)
+
+  return (
+    <div className="absolute bottom-6 left-1/2 z-[1000] -translate-x-1/2">
+      {confirming && (
+        <div className="absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-xl border border-neutral-200 bg-white p-3 shadow-xl">
+          <span className="whitespace-nowrap text-xs font-medium text-neutral-700">
+            Delete page {page + 1}?
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfirming(false)}
+              className="rounded-lg px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setConfirming(false)
+                onDelete()
+              }}
+              className="rounded-lg bg-red-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-700"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="flex items-center gap-0.5 rounded-full border border-neutral-200 bg-white/90 py-1 pl-3 pr-1.5 shadow-md backdrop-blur">
+        <span className="text-xs font-medium text-neutral-600">
+          Page {page + 1} <span className="text-neutral-400">/ {count}</span>
+        </span>
+        <button
+          onClick={() => setConfirming((v) => !v)}
+          title="Delete this page"
+          className={`ml-1 flex h-6 w-6 items-center justify-center rounded-full transition-colors ${
+            confirming
+              ? 'bg-red-100 text-red-600'
+              : 'text-neutral-500 hover:bg-red-50 hover:text-red-600'
+          }`}
+        >
+          <Trash2 className="h-3.5 w-3.5" strokeWidth={2.25} />
+        </button>
+      </div>
+    </div>
   )
 }
 

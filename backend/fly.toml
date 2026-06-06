@@ -1,7 +1,12 @@
 # Run `fly launch --no-deploy` once to claim the app name, then `fly deploy`.
 # Set secrets before first deploy:
 #   fly secrets set OPENAI_API_KEY=sk-...
+#   fly secrets set SUPABASE_URL=https://<project-ref>.supabase.co
+#   fly secrets set SUPABASE_JWT_SECRET=...           # Settings -> API -> JWT secret (HS256 fallback)
+#   fly secrets set SUPABASE_SERVICE_ROLE_KEY=...     # Settings -> API; enables account deletion. Keep secret.
 #   fly secrets set CORS_ORIGINS=https://your-frontend.vercel.app
+# capacitor://localhost and https://localhost (iOS WebView) are always allowed
+# via main.py's origin regex, so CORS_ORIGINS only needs the prod web origin.
 
 app = "euraai-api"
 primary_region = "iad"
@@ -12,10 +17,10 @@ primary_region = "iad"
 [http_service]
   internal_port = 8000
   force_https = true
-  # No local ML model — safe to auto-stop idle machines. Cold start is just
-  # uvicorn (<1s) since OpenAI does all the heavy lifting remotely.
+  # Keep one machine warm so a student mid-problem never waits on a cold start;
+  # extra machines still auto-stop when idle.
   auto_stop_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
 [[vm]]
   cpu_kind = "shared"
