@@ -54,7 +54,8 @@
       "Bash(findstr \"LISTENING\")",
       "Bash(taskkill /PID 18924 /F)",
       "PowerShell(Stop-Process *)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(brew install *)"
     ]
   }
 }
