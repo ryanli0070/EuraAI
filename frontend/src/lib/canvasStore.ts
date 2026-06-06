@@ -59,6 +59,8 @@ export type Folder = {
   createdAt: number
   modifiedAt: number
   order: number
+  // Palette key (see FOLDER_COLORS in CanvasMenu). Undefined = default manila.
+  color?: string
 }
 
 export type Item = CanvasMeta | Folder
@@ -94,6 +96,7 @@ type FolderRow = {
   parent_id: string | null
   name: string
   sort_order: number
+  color: string | null
   created_at: string
   modified_at: string
 }
@@ -123,6 +126,7 @@ function mapFolder(row: FolderRow): Folder {
     createdAt: toMillis(row.created_at),
     modifiedAt: toMillis(row.modified_at),
     order: row.sort_order,
+    color: row.color ?? undefined,
   }
 }
 
@@ -301,6 +305,16 @@ export async function renameItem(id: ItemId, name: string): Promise<void> {
     .eq('id', id)
     .select('id')
   if (folderUpd.error) console.error('[canvasStore] renameItem folders', folderUpd.error)
+  notify()
+}
+
+// Set a folder's color to a palette key, or null to reset to the default manila.
+export async function setFolderColor(id: FolderId, color: string | null): Promise<void> {
+  const { error } = await supabase
+    .from('folders')
+    .update({ color })
+    .eq('id', id)
+  if (error) console.error('[canvasStore] setFolderColor', error)
   notify()
 }
 

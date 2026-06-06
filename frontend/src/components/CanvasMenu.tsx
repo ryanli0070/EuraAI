@@ -18,10 +18,32 @@ import {
   renameItem,
   reorderItems,
   searchAll,
+  setFolderColor,
   subscribe,
 } from '../lib/canvasStore'
 import { deleteAccount, signOut } from '../lib/auth'
 import { AccountScreen, type AccountScreenId } from './AccountScreen'
+
+// Folder color palette. Muted, paper-like tones that read against the dark ink
+// border. The stored value is the `key`; `manila` is the default and is stored
+// as null so a fresh folder has no color row. Page sheets stay cream regardless
+// so they read as paper tucked inside any folder color.
+const FOLDER_COLORS: { key: string; label: string; value: string }[] = [
+  { key: 'manila', label: 'Default', value: '#f3ecd6' },
+  { key: 'red', label: 'Red', value: '#e6b9b0' },
+  { key: 'orange', label: 'Orange', value: '#ecc9a6' },
+  { key: 'yellow', label: 'Yellow', value: '#e6d79b' },
+  { key: 'green', label: 'Green', value: '#c2d6b4' },
+  { key: 'blue', label: 'Blue', value: '#b6ccdd' },
+  { key: 'purple', label: 'Purple', value: '#ccc0de' },
+  { key: 'pink', label: 'Pink', value: '#e6c2d4' },
+]
+
+// Resolve a stored palette key to its hex. Unknown/undefined keys return
+// undefined so the CSS `var(--folder-color, …)` fallback takes over.
+function folderColorValue(key?: string): string | undefined {
+  return FOLDER_COLORS.find((c) => c.key === key)?.value
+}
 
 const STYLES = `
 .canvas-menu{
@@ -166,6 +188,11 @@ const STYLES = `
 .canvas-menu .card:hover{transform:translate(-1px,-2px);box-shadow:5px 7px 0 rgba(24,36,63,0.08)}
 .canvas-menu .card.dragging{opacity:0.4}
 .canvas-menu .card.drop-target{outline:2px dashed var(--accent);outline-offset:-4px}
+/* While the kebab menu is open, lift the whole card above sibling cards so the
+   overflowing dropdown isn't covered. Hover applies a transform, which creates
+   a stacking context and would otherwise trap the menu's z-index inside the
+   card. Kept below the sticky header (z-index:10). */
+.canvas-menu .card.menu-open{z-index:8}
 
 .canvas-menu .thumb{
   height:140px;display:flex;align-items:center;justify-content:center;
@@ -186,12 +213,12 @@ const STYLES = `
 .canvas-menu .card.folder-card{
   overflow:visible;
   margin-top:14px;
-  background:#f3ecd6;
+  background:var(--folder-color,#f3ecd6);
 }
 .canvas-menu .card.folder-card::before{
   content:"";position:absolute;left:16px;top:-14px;
   width:42%;height:16px;
-  background:#f3ecd6;
+  background:var(--folder-color,#f3ecd6);
   border:1.5px solid var(--ink);border-bottom:none;
   border-radius:7px 9px 0 0;
   z-index:2;
@@ -199,7 +226,7 @@ const STYLES = `
 .canvas-menu .thumb.folder{
   height:126px;
   position:relative;
-  background:#f3ecd6;
+  background:var(--folder-color,#f3ecd6);
   border-bottom:none;
   border-radius:6.5px 6.5px 0 0;
 }
@@ -214,7 +241,7 @@ const STYLES = `
 .canvas-menu .folder-inside .p3{top:36px;z-index:3;background:#fffdf6}
 .canvas-menu .folder-inside .folder-front{
   position:absolute;left:0;right:0;top:46px;bottom:0;
-  background:#f3ecd6;border-top:1.5px solid var(--ink);z-index:4;
+  background:var(--folder-color,#f3ecd6);border-top:1.5px solid var(--ink);z-index:4;
 }
 
 .canvas-menu .card-body{
@@ -234,7 +261,7 @@ const STYLES = `
 }
 
 .canvas-menu .kebab{
-  position:absolute;top:8px;right:8px;
+  position:absolute;top:8px;right:8px;z-index:5;
   display:none;
   width:28px;height:28px;border-radius:50%;
   background:rgba(255,255,255,0.95);border:1px solid var(--rule);
@@ -261,6 +288,29 @@ const STYLES = `
 .canvas-menu .menu button.danger{color:var(--red)}
 .canvas-menu .menu button.danger:hover{background:rgba(180,69,61,0.08)}
 .canvas-menu .menu .sep{height:1px;background:var(--rule)}
+
+.canvas-menu .menu-colors-label{
+  padding:8px 14px 2px;
+  font-family:var(--mono);font-size:10px;letter-spacing:0.08em;
+  text-transform:uppercase;color:var(--pencil);
+}
+.canvas-menu .menu-colors{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:10px;
+  justify-items:center;
+  padding:6px 14px 12px;
+}
+/* Scoped under .menu-colors (0,3,0) so width/padding/border win over the
+   generic ".menu button" rule (0,2,1) — otherwise swatches stretch to full
+   width and render as ovals instead of circles. */
+.canvas-menu .menu-colors .swatch{
+  display:block;width:24px;height:24px;border-radius:50%;
+  padding:0;cursor:pointer;
+  border:1.5px solid var(--ink);
+  box-shadow:1px 1px 0 rgba(24,36,63,0.12);
+  transition:transform .1s ease;
+}
+.canvas-menu .menu-colors .swatch:hover{transform:translateY(-1px)}
+.canvas-menu .menu-colors .swatch.active{outline:2px solid var(--accent);outline-offset:2px}
 
 .canvas-menu .empty-state{
   padding:80px 24px;text-align:center;color:var(--ink-soft);
@@ -512,6 +562,11 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
                   void duplicateCanvas(item.id)
                   setOpenMenuId(null)
                 }}
+                onSetColor={(color) => {
+                  if (item.kind !== 'folder') return
+                  void setFolderColor(item.id, color)
+                  setOpenMenuId(null)
+                }}
                 onDragStart={onDragStart(item.id)}
                 onDragEnd={onDragEnd}
                 onDragOver={onDragOverItem(item)}
@@ -639,6 +694,7 @@ type CardProps = {
   onToggleMenu: () => void
   onDelete: () => void
   onDuplicate: () => void
+  onSetColor: (color: string | null) => void
   onDragStart: (e: React.DragEvent) => void
   onDragEnd: () => void
   onDragOver: (e: React.DragEvent) => void
@@ -661,6 +717,7 @@ function Card({
   onToggleMenu,
   onDelete,
   onDuplicate,
+  onSetColor,
   onDragStart,
   onDragEnd,
   onDragOver,
@@ -668,9 +725,14 @@ function Card({
   onDrop,
 }: CardProps) {
   const isFolder = item.kind === 'folder'
+  const folderColor = isFolder ? folderColorValue((item as Folder).color) : undefined
+  const cardStyle = folderColor
+    ? ({ '--folder-color': folderColor } as React.CSSProperties)
+    : undefined
   return (
     <div
-      className={`card ${isFolder ? 'folder-card' : ''} ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''}`}
+      className={`card ${isFolder ? 'folder-card' : ''} ${isMenuOpen ? 'menu-open' : ''} ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''}`}
+      style={cardStyle}
       draggable={!isRenaming}
       onClick={() => { if (!isRenaming) onOpen() }}
       onDoubleClick={(e) => { e.stopPropagation(); onRequestRename() }}
@@ -712,6 +774,29 @@ function Card({
         <div className="menu" onClick={(e) => e.stopPropagation()}>
           <button onClick={onRequestRename}>Rename</button>
           {item.kind === 'canvas' && <button onClick={onDuplicate}>Duplicate</button>}
+          {isFolder && (
+            <>
+              <div className="sep" />
+              <div className="menu-colors-label">Color</div>
+              <div className="menu-colors" role="group" aria-label="Folder color">
+                {FOLDER_COLORS.map((c) => {
+                  const active = ((item as Folder).color ?? 'manila') === c.key
+                  return (
+                    <button
+                      key={c.key}
+                      type="button"
+                      className={`swatch ${active ? 'active' : ''}`}
+                      style={{ background: c.value }}
+                      title={c.label}
+                      aria-label={c.label}
+                      aria-pressed={active}
+                      onClick={() => onSetColor(c.key === 'manila' ? null : c.key)}
+                    />
+                  )
+                })}
+              </div>
+            </>
+          )}
           <div className="sep" />
           <button className="danger" onClick={onDelete}>Delete</button>
         </div>

@@ -113,6 +113,7 @@ CREATE TABLE public.folders (
     parent_id uuid,
     name text NOT NULL,
     sort_order double precision DEFAULT 0 NOT NULL,
+    color text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     modified_at timestamp with time zone DEFAULT now() NOT NULL
 );
