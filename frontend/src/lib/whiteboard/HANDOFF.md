@@ -27,7 +27,7 @@ Feature coverage already implemented in the engine:
 - Freehand draw with pressure/velocity taper
 - Eraser, select (click + marquee), move, delete, duplicate
 - Undo/redo + keyboard shortcuts (`Ctrl+Z`/`Y`/`D`, `Delete`/`Backspace`)
-- Pan/zoom: wheel, `Ctrl`+wheel, two-finger pinch, hand tool, middle-mouse drag
+- Pan/zoom: wheel, `Ctrl`+wheel, two-finger pinch, single-finger drag, middle-mouse drag
 - Per-canvas IndexedDB persistence (debounced, flushes on unmount)
 - PNG export matching `editor.toImage()`'s `padding`/`scale`/`background` options
 
@@ -76,7 +76,7 @@ Notable simplifications this unlocks (delete the old workarounds):
   panel can open straight from a toolbar button's onClick.
 
 The engine has **no built-in toolbar**. Step 3 must add a small React toolbar
-(select / draw / eraser / hand, plus undo / redo / clear / duplicate buttons)
+(select / draw / eraser, plus undo / redo / clear / duplicate buttons)
 that calls `engine.setTool(...)` etc. The existing color panel and check/help
 menu stay as-is; the `COLORS` array already has `css` hex values — pass those
 straight to `engine.setColor()`.
@@ -106,7 +106,7 @@ straight to `engine.setColor()`.
   engine. New canvases are unaffected. If preserving old drawings matters,
   write a one-time importer (tldraw snapshot → `WhiteboardDoc`). For a
   pre-launch app this is probably fine to skip.
-- **Scope is the core toolset** (draw / eraser / select / hand) — per the
+- **Scope is the core toolset** (draw / eraser / select) — per the
   decision to drop tldraw's arrows / text / geo shapes / notes / frames / laser.
 - History uses full-document snapshots, capped at 60 entries. Fine for the
   expected board size (a few KB); revisit only if boards get very large.

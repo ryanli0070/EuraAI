@@ -5,7 +5,6 @@ import {
   Copy,
   Eraser,
   FilePlus,
-  Hand,
   Maximize2,
   Minimize2,
   MousePointer2,
@@ -421,7 +420,6 @@ function Toolbar({
     { id: 'select', label: 'Select', Icon: MousePointer2 },
     { id: 'draw', label: 'Draw', Icon: Pencil },
     { id: 'eraser', label: 'Eraser', Icon: Eraser },
-    { id: 'hand', label: 'Hand', Icon: Hand },
   ]
   return (
     <div className="absolute left-1/2 top-3 z-[1000] flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
@@ -481,7 +479,7 @@ function HomeButton({ onHome }: { onHome?: () => void }) {
   return (
     <button
       onClick={onHome}
-      className="absolute left-0 top-0 z-[1000] flex h-10 items-center gap-1 rounded-br-xl border-b border-r border-neutral-200 bg-white/95 px-3 text-sm font-medium text-neutral-700 shadow-sm backdrop-blur transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+      className="wb-home absolute left-0 top-0 z-[1000] flex h-10 items-center gap-1 rounded-br-xl border-b border-r border-neutral-200 bg-white/95 px-3 text-sm font-medium text-neutral-700 shadow-sm backdrop-blur transition-colors hover:bg-neutral-100 hover:text-neutral-900"
       aria-label="Home"
       style={{ touchAction: 'manipulation' }}
     >

@@ -34,7 +34,7 @@ export type WhiteboardDoc = {
 
 export const emptyDoc = (): WhiteboardDoc => ({ version: 1, strokes: [], pageCount: 1 })
 
-export type ToolId = 'select' | 'draw' | 'eraser' | 'hand'
+export type ToolId = 'select' | 'draw' | 'eraser'
 
 /** Page-space camera. screen = page * z + {x,y}. */
 export type Camera = { x: number; y: number; z: number }
