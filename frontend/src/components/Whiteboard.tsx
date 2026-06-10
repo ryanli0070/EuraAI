@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import katex from 'katex'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChevronLeft,
   Copy,
   Eraser,
   FilePlus,
-  Maximize2,
-  Minimize2,
   MousePointer2,
   Pencil,
   Redo2,
@@ -23,7 +20,7 @@ import {
 } from '../lib/canvasStore'
 import { apiFetch } from '../lib/api'
 import { getScrollVertical, getShowGrid, subscribeSettings } from '../lib/settings'
-import { SiriAssistant, type SiriHistoryMsg } from './SiriAssistant'
+import { OrionAssistant } from './OrionAssistant'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -41,7 +38,6 @@ type HelpApiResponse = {
   status: 'ok' | 'all_correct' | 'no_math' | 'error'
 }
 
-const MIN_W = 260
 const MIN_H = 180
 
 function defaultBox(): ChatBox {
@@ -109,6 +105,9 @@ export function Whiteboard({
   const [chatReady, setChatReady] = useState(false)
   const [showColorPanel, setShowColorPanel] = useState(false)
   const [engineState, setEngineState] = useState<EngineState>(DEFAULT_ENGINE_STATE)
+  // The Orion assistant box (toolbar pill ⇄ glass panel). Lifted here so Check
+  // Work's Hint/Help can pop it open to show their result.
+  const [assistantOpen, setAssistantOpen] = useState(false)
 
   const handleMount = useCallback((engine: WhiteboardEngine) => {
     engineRef.current = engine
@@ -200,6 +199,7 @@ export function Whiteboard({
   }, [])
 
   const handleHint = useCallback(async () => {
+    setAssistantOpen(true) // pop Orion open so the hint is visible
     setCheckStatus('checking')
     try {
       const formData = await captureCanvas()
@@ -226,6 +226,7 @@ export function Whiteboard({
   }, [appendMessage, captureCanvas])
 
   const handleHelp = useCallback(async () => {
+    setAssistantOpen(true) // pop Orion open so the explanation is visible
     setCheckStatus('checking')
     try {
       const formData = await captureCanvas()
@@ -283,22 +284,6 @@ export function Whiteboard({
     }
   }, [appendMessage, input, latex, messages, sending])
 
-  // Route the toolbar Siri-style assistant into the SAME backend the right-side
-  // ChatPanel uses. Returns the full reply; the Siri box reveals it incrementally.
-  const sendToAssistant = useCallback(
-    async (question: string, history: SiriHistoryMsg[]): Promise<string> => {
-      const res = await apiFetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ latex, history, question }),
-      })
-      if (!res.ok) throw new Error(`Server responded ${res.status}`)
-      const data = (await res.json()) as { reply: string }
-      return data.reply
-    },
-    [latex],
-  )
-
   // Capture a small thumbnail before leaving so the menu shows a recognizable
   // preview. Best-effort: clear the thumbnail if capture fails or the canvas
   // is empty, so a now-empty canvas doesn't keep a stale image.
@@ -353,7 +338,17 @@ export function Whiteboard({
         onRedo={() => engineRef.current?.redo()}
         onDuplicate={() => engineRef.current?.duplicateSelected()}
         onClear={handleClear}
-        onAsk={sendToAssistant}
+        assistant={{
+          messages,
+          input,
+          setInput,
+          onSend: handleSend,
+          onClear: clearChat,
+          sending,
+          checking: checkStatus === 'checking',
+          open: assistantOpen,
+          onOpenChange: setAssistantOpen,
+        }}
       />
 
       {showColorPanel && engineState.tool === 'draw' && (
@@ -408,18 +403,6 @@ export function Whiteboard({
           {checkStatus === 'checking' ? 'Checking…' : 'Check Work'}
         </button>
       </div>
-
-      <ChatPanel
-        messages={messages}
-        input={input}
-        setInput={setInput}
-        onSend={handleSend}
-        onClear={clearChat}
-        sending={sending}
-        checking={checkStatus === 'checking'}
-        box={box}
-        setBox={setBox}
-      />
     </div>
   )
 }
@@ -431,7 +414,7 @@ function Toolbar({
   onRedo,
   onDuplicate,
   onClear,
-  onAsk,
+  assistant,
 }: {
   state: EngineState
   onSelectTool: (tool: ToolId) => void
@@ -439,7 +422,17 @@ function Toolbar({
   onRedo: () => void
   onDuplicate: () => void
   onClear: () => void
-  onAsk: (question: string, history: SiriHistoryMsg[]) => Promise<string>
+  assistant: {
+    messages: ChatMessage[]
+    input: string
+    setInput: (s: string) => void
+    onSend: () => void
+    onClear: () => void
+    sending: boolean
+    checking: boolean
+    open: boolean
+    onOpenChange: (open: boolean) => void
+  }
 }) {
   const tools: { id: ToolId; label: string; Icon: typeof Pencil }[] = [
     { id: 'select', label: 'Select', Icon: MousePointer2 },
@@ -448,8 +441,8 @@ function Toolbar({
   ]
   return (
     <div className="absolute left-1/2 top-3 z-[1000] flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
-      {/* Siri-style assistant entry point — visually distinct, leading the bar. */}
-      <SiriAssistant sendToAssistant={onAsk} />
+      {/* Orion assistant entry point — leading the bar, opens the glass chat box. */}
+      <OrionAssistant {...assistant} />
       <span className="mx-1 h-6 w-px bg-neutral-200" />
       {tools.map(({ id, label, Icon }) => {
         const active = state.tool === id
@@ -628,292 +621,4 @@ function PageControls({
       </div>
     </div>
   )
-}
-
-function ChatPanel({
-  messages,
-  input,
-  setInput,
-  onSend,
-  onClear,
-  sending,
-  checking,
-  box,
-  setBox,
-}: {
-  messages: ChatMessage[]
-  input: string
-  setInput: (s: string) => void
-  onSend: () => void
-  onClear: () => void
-  sending: boolean
-  checking: boolean
-  box: ChatBox
-  setBox: React.Dispatch<React.SetStateAction<ChatBox>>
-}) {
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages, sending, checking])
-
-  const hasMessages = messages.length > 0
-
-  const startDrag = (e: React.PointerEvent) => {
-    if (box.attached) return
-    if ((e.target as HTMLElement).closest('button')) return
-    e.preventDefault()
-    const sx = e.clientX
-    const sy = e.clientY
-    const start = box
-    const onMove = (ev: PointerEvent) => {
-      const maxX = Math.max(0, window.innerWidth - 80)
-      const maxY = Math.max(0, window.innerHeight - 40)
-      setBox({
-        ...start,
-        x: Math.min(maxX, Math.max(0, start.x + ev.clientX - sx)),
-        y: Math.min(maxY, Math.max(0, start.y + ev.clientY - sy)),
-      })
-    }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }
-
-  const startResize = (e: React.PointerEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const sx = e.clientX
-    const sy = e.clientY
-    const start = box
-    const onMove = (ev: PointerEvent) => {
-      const maxW = window.innerWidth - start.x - 8
-      const maxH = window.innerHeight - start.y - 8
-      setBox({
-        ...start,
-        w: Math.max(MIN_W, Math.min(maxW, start.w + ev.clientX - sx)),
-        h: Math.max(MIN_H, Math.min(maxH, start.h + ev.clientY - sy)),
-      })
-    }
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }
-
-  const toggleCollapsed = () =>
-    setBox((prev) => ({ ...prev, collapsed: !prev.collapsed }))
-
-  const toggleAttached = () =>
-    setBox((prev) => ({ ...prev, attached: !prev.attached }))
-
-  const containerStyle: React.CSSProperties = box.attached
-    ? {}
-    : {
-        left: box.x,
-        top: box.y,
-        width: box.w,
-        height: box.collapsed ? 'auto' : box.h,
-      }
-
-  // Attached mode: flush to top-right, stretched down to above the Check Work button.
-  // Collapsed + attached: let it shrink to header height.
-  const containerClass = box.attached
-    ? `absolute right-4 top-4 z-[999] flex w-[360px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl ${
-        box.collapsed ? '' : 'bottom-28'
-      }`
-    : 'absolute z-[999] flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl'
-
-  return (
-    <div className={containerClass} style={containerStyle}>
-      <div
-        onPointerDown={startDrag}
-        className={`flex select-none items-center justify-between border-b border-neutral-100 bg-neutral-50 px-4 py-2.5 ${
-          box.attached ? '' : 'cursor-move'
-        }`}
-        style={{ touchAction: box.attached ? 'auto' : 'none' }}
-      >
-        <div className="flex items-center gap-2">
-          <img
-            src="/images/Orion_Icon.png"
-            alt="Orion"
-            className="h-9 w-9 object-contain"
-          />
-          <span className="text-sm font-semibold text-neutral-800">Orion</span>
-        </div>
-        <div className="flex items-center gap-1">
-          {hasMessages && !box.collapsed && (
-            <button
-              onClick={onClear}
-              className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
-            >
-              Clear
-            </button>
-          )}
-          <button
-            onClick={toggleAttached}
-            className="rounded p-1.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
-            aria-label={box.attached ? 'Detach panel' : 'Dock to top-right'}
-            title={box.attached ? 'Detach' : 'Dock to top-right'}
-          >
-            {box.attached ? (
-              <Maximize2 className="h-3.5 w-3.5" strokeWidth={2.25} />
-            ) : (
-              <Minimize2 className="h-3.5 w-3.5" strokeWidth={2.25} />
-            )}
-          </button>
-          <button
-            onClick={toggleCollapsed}
-            className="rounded px-2 py-1 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700"
-            aria-label={box.collapsed ? 'Expand' : 'Collapse'}
-          >
-            {box.collapsed ? '▢' : '—'}
-          </button>
-        </div>
-      </div>
-
-      {box.collapsed ? null : (<>
-
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
-        {!hasMessages && (
-          <div className="pt-6 text-center text-sm text-neutral-400">
-            <p className="font-medium text-neutral-500">Draw your work, then hit Check Work.</p>
-            <p className="mt-1">Ask a follow-up here any time — I'll nudge, not solve.</p>
-          </div>
-        )}
-        {messages.map((m, i) => (
-          <MessageBubble key={i} message={m} />
-        ))}
-        {(sending || checking) && (
-          <div className="flex justify-start">
-            <div className="rounded-2xl rounded-tl-sm bg-neutral-100 px-3 py-2 text-sm text-neutral-500">
-              <TypingDots />
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="border-t border-neutral-100 bg-white px-3 py-2">
-        <div className="flex items-end gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                onSend()
-              }
-            }}
-            placeholder="Ask a follow-up…"
-            rows={1}
-            className="max-h-32 flex-1 resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800 outline-none placeholder:text-neutral-400 focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
-          />
-          <button
-            onClick={onSend}
-            disabled={!input.trim() || sending}
-            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-all hover:bg-blue-700 active:scale-95 disabled:opacity-50"
-          >
-            Send
-          </button>
-        </div>
-      </div>
-
-      {!box.attached && (
-        <div
-          onPointerDown={startResize}
-          className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
-          style={{
-            touchAction: 'none',
-            background:
-              'linear-gradient(135deg, transparent 0%, transparent 55%, rgba(0,0,0,0.25) 55%, rgba(0,0,0,0.25) 65%, transparent 65%, transparent 75%, rgba(0,0,0,0.25) 75%, rgba(0,0,0,0.25) 85%, transparent 85%)',
-          }}
-        />
-      )}
-      </>)}
-    </div>
-  )
-}
-
-function MessageBubble({ message }: { message: ChatMessage }) {
-  if (message.role === 'user') {
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-blue-600 px-3 py-2 text-sm text-white">
-          {message.text}
-        </div>
-      </div>
-    )
-  }
-
-  const toneClass =
-    message.status === 'all_correct'
-      ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
-      : message.status === 'error'
-        ? 'bg-red-50 text-red-900 border border-red-200'
-        : message.status === 'no_math'
-          ? 'bg-amber-50 text-amber-900 border border-amber-200'
-          : 'bg-neutral-100 text-neutral-800'
-
-  return (
-    <div className="flex justify-start">
-      <div
-        className={`max-w-[85%] select-text rounded-2xl rounded-tl-sm px-3 py-2 text-sm leading-snug ${toneClass}`}
-      >
-        <RichText text={message.text} />
-      </div>
-    </div>
-  )
-}
-
-function TypingDots() {
-  return (
-    <span className="inline-flex gap-1">
-      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400 [animation-delay:-0.3s]" />
-      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400 [animation-delay:-0.15s]" />
-      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400" />
-    </span>
-  )
-}
-
-// Render a string with optional inline `$...$` math segments via KaTeX.
-function RichText({ text }: { text: string }) {
-  const parts = useMemo(() => splitMath(text), [text])
-  return (
-    <>
-      {parts.map((p, i) =>
-        p.kind === 'math' ? (
-          <span
-            key={i}
-            dangerouslySetInnerHTML={{
-              __html: katex.renderToString(p.value, { throwOnError: false }),
-            }}
-          />
-        ) : (
-          <span key={i}>{p.value}</span>
-        ),
-      )}
-    </>
-  )
-}
-
-type Segment = { kind: 'text' | 'math'; value: string }
-
-function splitMath(s: string): Segment[] {
-  const out: Segment[] = []
-  const re = /\$([^$]+)\$/g
-  let last = 0
-  let m: RegExpExecArray | null
-  while ((m = re.exec(s)) !== null) {
-    if (m.index > last) out.push({ kind: 'text', value: s.slice(last, m.index) })
-    out.push({ kind: 'math', value: m[1] })
-    last = re.lastIndex
-  }
-  if (last < s.length) out.push({ kind: 'text', value: s.slice(last) })
-  return out
 }
