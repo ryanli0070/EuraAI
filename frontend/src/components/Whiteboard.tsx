@@ -23,6 +23,7 @@ import {
 } from '../lib/canvasStore'
 import { apiFetch } from '../lib/api'
 import { getScrollVertical, getShowGrid, subscribeSettings } from '../lib/settings'
+import { SiriAssistant, type SiriHistoryMsg } from './SiriAssistant'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -282,6 +283,22 @@ export function Whiteboard({
     }
   }, [appendMessage, input, latex, messages, sending])
 
+  // Route the toolbar Siri-style assistant into the SAME backend the right-side
+  // ChatPanel uses. Returns the full reply; the Siri box reveals it incrementally.
+  const sendToAssistant = useCallback(
+    async (question: string, history: SiriHistoryMsg[]): Promise<string> => {
+      const res = await apiFetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ latex, history, question }),
+      })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+      const data = (await res.json()) as { reply: string }
+      return data.reply
+    },
+    [latex],
+  )
+
   // Capture a small thumbnail before leaving so the menu shows a recognizable
   // preview. Best-effort: clear the thumbnail if capture fails or the canvas
   // is empty, so a now-empty canvas doesn't keep a stale image.
@@ -336,6 +353,7 @@ export function Whiteboard({
         onRedo={() => engineRef.current?.redo()}
         onDuplicate={() => engineRef.current?.duplicateSelected()}
         onClear={handleClear}
+        onAsk={sendToAssistant}
       />
 
       {showColorPanel && engineState.tool === 'draw' && (
@@ -413,6 +431,7 @@ function Toolbar({
   onRedo,
   onDuplicate,
   onClear,
+  onAsk,
 }: {
   state: EngineState
   onSelectTool: (tool: ToolId) => void
@@ -420,6 +439,7 @@ function Toolbar({
   onRedo: () => void
   onDuplicate: () => void
   onClear: () => void
+  onAsk: (question: string, history: SiriHistoryMsg[]) => Promise<string>
 }) {
   const tools: { id: ToolId; label: string; Icon: typeof Pencil }[] = [
     { id: 'select', label: 'Select', Icon: MousePointer2 },
@@ -428,6 +448,9 @@ function Toolbar({
   ]
   return (
     <div className="absolute left-1/2 top-3 z-[1000] flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
+      {/* Siri-style assistant entry point — visually distinct, leading the bar. */}
+      <SiriAssistant sendToAssistant={onAsk} />
+      <span className="mx-1 h-6 w-px bg-neutral-200" />
       {tools.map(({ id, label, Icon }) => {
         const active = state.tool === id
         return (
