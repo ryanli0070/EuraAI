@@ -8,6 +8,7 @@
  */
 
 const GRID_KEY = 'euraai.settings.showGrid'
+const SCROLL_VERTICAL_KEY = 'euraai.settings.scrollVertical'
 
 type Listener = () => void
 const listeners = new Set<Listener>()
@@ -29,6 +30,23 @@ export function getShowGrid(): boolean {
 export function setShowGrid(value: boolean): void {
   try {
     localStorage.setItem(GRID_KEY, value ? '1' : '0')
+  } catch {
+    // Ignore quota / availability errors — the setting just won't persist.
+  }
+  for (const l of listeners) l()
+}
+
+/**
+ * Whether paging scrolls vertically (swipe up/down between pages, pull up past
+ * the last page to add one) instead of the default horizontal. Defaults off.
+ */
+export function getScrollVertical(): boolean {
+  return readBool(SCROLL_VERTICAL_KEY, false)
+}
+
+export function setScrollVertical(value: boolean): void {
+  try {
+    localStorage.setItem(SCROLL_VERTICAL_KEY, value ? '1' : '0')
   } catch {
     // Ignore quota / availability errors — the setting just won't persist.
   }

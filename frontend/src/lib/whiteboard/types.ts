@@ -55,4 +55,6 @@ export type EngineState = {
   page: number
   /** Total number of pages in the document. */
   pageCount: number
+  /** True when paging runs vertically (swipe up/down) instead of horizontally. */
+  vertical: boolean
 }

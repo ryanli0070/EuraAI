@@ -6,12 +6,15 @@
  * public API at the bottom (`subscribe`, `setTool`, `undo`, `toImage`, …).
  *
  * Paging model (GoodNotes-style): pages are isolated — exactly one sheet is
- * shown at rest, with the next/previous a full viewport away. Horizontal drags
- * scroll between pages and snap on release; a swipe flicks to the neighbour.
- * Dragging past the last page and releasing creates a new one. Vertical pan and
- * zoom stay free within a page. Strokes are stored in a wide page-coordinate
- * space (page `i` lives near x = i·STRIDE) and each page is drawn from its own
- * origin, so on-screen isolation doesn't depend on the screen size.
+ * shown at rest, with the next/previous a full viewport away. Drags along the
+ * paging axis scroll between pages and snap on release; a swipe flicks to the
+ * neighbour. Dragging past the last page and releasing creates a new one. Pan
+ * across the page and zoom stay free. The paging axis is configurable
+ * (`setScrollDirection`): horizontal by default — swipe left/right, pull right
+ * to add — or vertical — swipe up/down, pull up to add. Strokes are always
+ * stored in a wide page-coordinate space (page `i` lives near x = i·STRIDE) and
+ * each page is drawn from its own origin, so the data model and on-screen
+ * isolation don't depend on the scroll direction or the screen size.
  */
 import { exportPng, type ExportOptions } from './export'
 import {
@@ -68,15 +71,16 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /**
- * Constrain a vertical translation so the page stays in view: rests centered
- * (with a little wiggle) when it fits, pans freely when taller than the screen.
+ * Constrain a within-page pan offset — a delta (screen px) from the page's
+ * centered resting position — so the sheet stays reachable: rests centered (±a
+ * little wiggle) when the page fits that axis, and pans just far enough to bring
+ * either edge flush when the page is larger than the viewport. Axis-agnostic, so
+ * the same logic drives both the horizontal (`panX`) and vertical (`panY`) pans.
  */
-function clampAxis(cam: number, viewport: number, page: number): number {
-  if (page <= viewport) {
-    const center = (viewport - page) / 2
-    return clamp(cam, center - PAN_WIGGLE, center + PAN_WIGGLE)
-  }
-  return clamp(cam, viewport - page - PAN_WIGGLE, PAN_WIGGLE)
+function clampPan(delta: number, pagePx: number, viewport: number): number {
+  const overflow = (pagePx - viewport) / 2
+  if (overflow <= 0) return clamp(delta, -PAN_WIGGLE, PAN_WIGGLE)
+  return clamp(delta, -overflow - PAN_WIGGLE, overflow + PAN_WIGGLE)
 }
 
 type Listener = () => void
@@ -92,16 +96,23 @@ export class WhiteboardEngine {
   private doc: WhiteboardDoc
   private history: History
 
-  // Paged camera: `zoom` scales, `offsetY` is the page's screen-space top,
-  // `scrollX` is the horizontal paging position (rest = page·slot), `offsetX`
-  // is within-page horizontal pan (only meaningful when zoomed in past
-  // fit-to-width — lets you reach a zoomed page's left/right edges), and
+  // Paged camera. `zoom` scales. `scroll` is the paging position along the
+  // active paging axis (rest = page·slot). `panX`/`panY` are within-page pan
+  // offsets — deltas (screen px) from the page's centered resting spot — that
+  // rest at 0 when the page fits and let you reach the edges when zoomed in.
   // `page` is the settled page index.
   private zoom = 1
-  private offsetY = 0
-  private scrollX = 0
-  private offsetX = 0
+  private scroll = 0
+  private panX = 0
+  private panY = 0
   private page = 0
+
+  // Paging axis. False = horizontal (swipe left/right between pages, pull right
+  // past the last to add one); true = vertical (swipe up/down, pull up to add).
+  // Set from the Settings toggle via setScrollDirection(). Storage is always
+  // laid out left-to-right regardless — only the on-screen projection and the
+  // input axis change, so drawings survive flipping this.
+  private vertical = false
 
   private tool: ToolId = 'draw'
   private color = DEFAULT_COLOR
@@ -114,6 +125,7 @@ export class WhiteboardEngine {
   // last page) and the snap/page-change animation handle.
   private pullProgress = 0
   private animRaf = 0
+  private wheelSnapTimer = 0
 
   // Transient interaction state.
   private drawing: Stroke | null = null
@@ -126,14 +138,14 @@ export class WhiteboardEngine {
     | {
         x: number
         y: number
-        scrollX0: number
-        offsetX0: number
-        offsetY0: number
-        lastX: number
+        scroll0: number
+        panX0: number
+        panY0: number
+        lastAlong: number
         lastT: number
       }
     | null = null
-  private panVX = 0 // horizontal pointer velocity (px/ms), for swipe detection
+  private panV = 0 // pointer velocity along the paging axis (px/ms), for swipe detection
 
   // Multi-touch gesture state (two-finger pan + pinch zoom).
   private pointers = new Map<number, { x: number; y: number }>()
@@ -190,45 +202,51 @@ export class WhiteboardEngine {
     return i * PAGE_STRIDE
   }
 
-  /**
-   * Width (screen px) of one paging slot. A full viewport plus a gutter — but
-   * never narrower than the on-screen page itself, so a zoomed-in page can't
-   * grow wider than the gap to its neighbour (which would make the next page
-   * overlap the current one).
-   */
-  private slotW(): number {
-    return Math.max(this.cssW, PAGE_W * this.zoom) + SLOT_GUTTER
+  /** Page length (page units) along the active paging axis. */
+  private pagingLen(): number {
+    return this.vertical ? PAGE_H : PAGE_W
   }
 
-  /** True when the page is wider than the viewport (zoomed past fit-to-width),
-   *  so horizontal drags pan within the page instead of switching pages. */
+  /** Viewport extent (screen px) along the active paging axis. */
+  private viewAlong(): number {
+    return this.vertical ? this.cssH : this.cssW
+  }
+
+  /**
+   * Length (screen px) of one paging slot, measured along the active paging
+   * axis. A full viewport plus a gutter — but never shorter than the on-screen
+   * page itself, so a zoomed-in page can't grow past the gap to its neighbour
+   * (which would make the next page overlap the current one).
+   */
+  private slot(): number {
+    return Math.max(this.viewAlong(), this.pagingLen() * this.zoom) + SLOT_GUTTER
+  }
+
+  /** True when the page is larger than the viewport along the paging axis
+   *  (zoomed past fit), so drags pan within the page instead of switching pages. */
   private pageExceedsView(): boolean {
-    return PAGE_W * this.zoom > this.cssW
+    return this.pagingLen() * this.zoom > this.viewAlong()
+  }
+
+  /** Resting `scroll` that centers page `i`. */
+  private restScroll(i: number): number {
+    return i * this.slot()
   }
 
   /**
-   * Constrain within-page horizontal pan. Rests centered (offsetX = 0, with a
-   * little wiggle) when the page fits the viewport; when zoomed in, allows
-   * panning just far enough to bring either page edge flush to the screen edge.
+   * Screen-space top-left of page `i`'s sheet at the current scroll/zoom. The
+   * paging term (`scroll - i·slot`) shifts the active axis between pages; the
+   * other axis just carries the within-page pan. `toPage()` and rendering both
+   * go through these, so they follow scroll/pan for free.
    */
-  private clampOffsetX(cam: number): number {
-    const overflow = (PAGE_W * this.zoom - this.cssW) / 2
-    if (overflow <= 0) return clamp(cam, -PAN_WIGGLE, PAN_WIGGLE)
-    return clamp(cam, -overflow - PAN_WIGGLE, overflow + PAN_WIGGLE)
-  }
-
-  /** Resting `scrollX` that centers page `i`. */
-  private restScroll(i: number): number {
-    return i * this.slotW()
-  }
-
-  /** Screen-space left edge of page `i`'s sheet at the current scroll/zoom.
-   *  `offsetX` shifts the whole strip for within-page horizontal pan; since
-   *  `toPage()` and rendering both go through here, they follow it for free. */
   private pageScreenLeft(i: number): number {
-    return (
-      this.cssW / 2 - (this.scrollX - i * this.slotW()) - (PAGE_W * this.zoom) / 2 + this.offsetX
-    )
+    const base = this.cssW / 2 - (PAGE_W * this.zoom) / 2 + this.panX
+    return this.vertical ? base : base - (this.scroll - i * this.slot())
+  }
+
+  private pageScreenTop(i: number): number {
+    const base = this.cssH / 2 - (PAGE_H * this.zoom) / 2 + this.panY
+    return this.vertical ? base - (this.scroll - i * this.slot()) : base
   }
 
   /** Which page a stroke belongs to, by the x of its center. */
@@ -257,9 +275,10 @@ export class WhiteboardEngine {
     const sx = clientX - rect.left
     const sy = clientY - rect.top
     const left = this.pageScreenLeft(this.page)
+    const top = this.pageScreenTop(this.page)
     return {
       x: this.pageStorageLeft(this.page) + (sx - left) / this.zoom,
-      y: (sy - this.offsetY) / this.zoom,
+      y: (sy - top) / this.zoom,
     }
   }
 
@@ -285,10 +304,10 @@ export class WhiteboardEngine {
       this.fitted = true
       this.fitToPage()
     } else {
-      // Slot width tracks the viewport — re-center the current page and clamp.
-      this.scrollX = this.restScroll(this.page)
-      this.offsetX = this.clampOffsetX(this.offsetX)
-      this.offsetY = clampAxis(this.offsetY, this.cssH, PAGE_H * this.zoom)
+      // Slot size tracks the viewport — re-center the current page and clamp.
+      this.scroll = this.restScroll(this.page)
+      this.panX = clampPan(this.panX, PAGE_W * this.zoom, this.cssW)
+      this.panY = clampPan(this.panY, PAGE_H * this.zoom, this.cssH)
     }
     this.requestRender()
   }
@@ -311,9 +330,9 @@ export class WhiteboardEngine {
   fitToPage(): void {
     if (this.cssW === 0 || this.cssH === 0) return
     this.zoom = clamp(this.fitZoom(), MIN_ZOOM, MAX_ZOOM)
-    this.offsetY = (this.cssH - PAGE_H * this.zoom) / 2
-    this.offsetX = 0
-    this.scrollX = this.restScroll(this.page)
+    this.panX = 0
+    this.panY = 0
+    this.scroll = this.restScroll(this.page)
     this.requestRender()
   }
 
@@ -341,7 +360,6 @@ export class WhiteboardEngine {
     const n = this.numPages()
     const sw = PAGE_W * z
     const sh = PAGE_H * z
-    const top = this.offsetY
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.fillStyle = DESK_BG
@@ -365,7 +383,8 @@ export class WhiteboardEngine {
     ctx.fillStyle = PAGE_BG
     for (let i = 0; i < n; i++) {
       const left = this.pageScreenLeft(i)
-      if (left >= this.cssW || left + sw <= 0) continue
+      const top = this.pageScreenTop(i)
+      if (left >= this.cssW || left + sw <= 0 || top >= this.cssH || top + sh <= 0) continue
       ctx.fillRect(left, top, sw, sh)
     }
     ctx.restore()
@@ -373,7 +392,8 @@ export class WhiteboardEngine {
     // Decor + ink, page by page, each drawn from its own storage origin.
     for (let i = 0; i < n; i++) {
       const left = this.pageScreenLeft(i)
-      if (left >= this.cssW || left + sw <= 0) continue
+      const top = this.pageScreenTop(i)
+      if (left >= this.cssW || left + sw <= 0 || top >= this.cssH || top + sh <= 0) continue
       const storeLeft = this.pageStorageLeft(i)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.translate(left - storeLeft * z, top)
@@ -399,7 +419,10 @@ export class WhiteboardEngine {
     // Selection / marquee overlay, in the current page's frame.
     const p = this.currentPage()
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.translate(this.pageScreenLeft(p) - this.pageStorageLeft(p) * z, top)
+    ctx.translate(
+      this.pageScreenLeft(p) - this.pageStorageLeft(p) * z,
+      this.pageScreenTop(p),
+    )
     ctx.scale(z, z)
     this.renderOverlay()
   }
@@ -489,8 +512,9 @@ export class WhiteboardEngine {
     this.pathCache.clear()
     // Keep the current page valid if undo/redo changed the page count.
     this.page = clamp(this.page, 0, this.numPages() - 1)
-    this.scrollX = this.restScroll(this.page)
-    this.offsetX = this.clampOffsetX(this.offsetX)
+    this.scroll = this.restScroll(this.page)
+    this.panX = clampPan(this.panX, PAGE_W * this.zoom, this.cssW)
+    this.panY = clampPan(this.panY, PAGE_H * this.zoom, this.cssH)
     // Drop selection ids that no longer exist.
     const ids = new Set(doc.strokes.map((s) => s.id))
     for (const id of this.selection) if (!ids.has(id)) this.selection.delete(id)
@@ -509,12 +533,12 @@ export class WhiteboardEngine {
     let pull = 0
     if (target > hi) {
       const raw = target - hi
-      this.scrollX = hi + Math.min(raw * PULL_DAMP, PULL_MAX_OVERSCROLL)
+      this.scroll = hi + Math.min(raw * PULL_DAMP, PULL_MAX_OVERSCROLL)
       pull = clamp(raw / PULL_THRESHOLD, 0, 1)
     } else if (target < 0) {
-      this.scrollX = -Math.min(-target * PULL_DAMP, PULL_MAX_OVERSCROLL)
+      this.scroll = -Math.min(-target * PULL_DAMP, PULL_MAX_OVERSCROLL)
     } else {
-      this.scrollX = target
+      this.scroll = target
     }
     if (pull !== this.pullProgress) {
       this.pullProgress = pull
@@ -535,12 +559,12 @@ export class WhiteboardEngine {
       this.addPage()
       return
     }
-    const slot = this.slotW()
-    const base = this.scrollX / slot
+    const slot = this.slot()
+    const base = this.scroll / slot
     let dest: number
-    if (Math.abs(this.panVX) > SWIPE_VELOCITY) {
-      // Flick: advance one page in the swipe direction (left flick → next page).
-      dest = this.panVX < 0 ? Math.floor(base) + 1 : Math.ceil(base) - 1
+    if (Math.abs(this.panV) > SWIPE_VELOCITY) {
+      // Flick: advance one page in the swipe direction (left/up flick → next page).
+      dest = this.panV < 0 ? Math.floor(base) + 1 : Math.ceil(base) - 1
     } else {
       dest = Math.round(base)
     }
@@ -567,17 +591,19 @@ export class WhiteboardEngine {
       this.page = dest
       this.emit()
     }
-    // Land on the page centered, not carrying a previous within-page pan.
-    this.offsetX = 0
+    // Land on the page centered along the paging axis (drop any within-page pan
+    // on that axis); the cross-axis position is preserved.
+    if (this.vertical) this.panY = 0
+    else this.panX = 0
     this.animateScrollTo(this.restScroll(dest))
   }
 
-  /** Tween scrollX to a target with an easeOutCubic over SNAP_MS. */
+  /** Tween `scroll` to a target with an easeOutCubic over SNAP_MS. */
   private animateScrollTo(target: number): void {
     cancelAnimationFrame(this.animRaf)
-    const start = this.scrollX
+    const start = this.scroll
     if (Math.abs(target - start) < 0.5) {
-      this.scrollX = target
+      this.scroll = target
       this.requestRender()
       return
     }
@@ -585,7 +611,7 @@ export class WhiteboardEngine {
     const step = (now: number) => {
       const t = Math.min(1, (now - t0) / SNAP_MS)
       const e = 1 - Math.pow(1 - t, 3)
-      this.scrollX = start + (target - start) * e
+      this.scroll = start + (target - start) * e
       this.requestRender()
       if (t < 1 && !this.disposed) this.animRaf = requestAnimationFrame(step)
     }
@@ -596,8 +622,23 @@ export class WhiteboardEngine {
   // Pointer input
   // ---------------------------------------------------------------------
 
+  /** Begin a pan/swipe from a screen point (single-finger touch or middle mouse). */
+  private beginPan(screen: { x: number; y: number }): void {
+    this.panFrom = {
+      x: screen.x,
+      y: screen.y,
+      scroll0: this.scroll,
+      panX0: this.panX,
+      panY0: this.panY,
+      lastAlong: this.vertical ? screen.y : screen.x,
+      lastT: performance.now(),
+    }
+    this.panV = 0
+  }
+
   private onPointerDown = (e: PointerEvent): void => {
     cancelAnimationFrame(this.animRaf) // interrupt any in-flight snap/scroll
+    this.cancelWheelSnap()
 
     // Hard rule: only the Pencil (and desktop mouse) draws. A touch pointer
     // — finger or palm — never enters the drawing pipeline; it can only pan
@@ -639,16 +680,7 @@ export class WhiteboardEngine {
 
     // Middle-mouse drags pan/swipe pages (touch panning is handled below).
     if (e.button === 1) {
-      this.panFrom = {
-        x: screen.x,
-        y: screen.y,
-        scrollX0: this.scrollX,
-        offsetX0: this.offsetX,
-        offsetY0: this.offsetY,
-        lastX: screen.x,
-        lastT: performance.now(),
-      }
-      this.panVX = 0
+      this.beginPan(screen)
       return
     }
 
@@ -656,22 +688,13 @@ export class WhiteboardEngine {
     // the active tool. Goodnotes-style: tool selection applies to the
     // Pencil; the finger is reserved for scrolling the board.
     if (e.pointerType === 'touch') {
-      this.panFrom = {
-        x: screen.x,
-        y: screen.y,
-        scrollX0: this.scrollX,
-        offsetX0: this.offsetX,
-        offsetY0: this.offsetY,
-        lastX: screen.x,
-        lastT: performance.now(),
-      }
-      this.panVX = 0
+      this.beginPan(screen)
       return
     }
 
     // Drawing/erasing/selecting act on the settled current page.
-    this.page = clamp(Math.round(this.scrollX / this.slotW()), 0, this.numPages() - 1)
-    this.scrollX = this.restScroll(this.page)
+    this.page = clamp(Math.round(this.scroll / this.slot()), 0, this.numPages() - 1)
+    this.scroll = this.restScroll(this.page)
     const page = this.toPage(e.clientX, e.clientY)
 
     if (this.tool === 'draw') {
@@ -754,22 +777,29 @@ export class WhiteboardEngine {
 
     if (this.panFrom) {
       const now = performance.now()
+      const along = this.vertical ? screen.y : screen.x
       const dt = now - this.panFrom.lastT
-      if (dt > 0) this.panVX = (screen.x - this.panFrom.lastX) / dt
-      this.panFrom.lastX = screen.x
+      if (dt > 0) this.panV = (along - this.panFrom.lastAlong) / dt
+      this.panFrom.lastAlong = along
       this.panFrom.lastT = now
-      this.offsetY = clampAxis(
-        this.panFrom.offsetY0 + (screen.y - this.panFrom.y),
-        this.cssH,
-        PAGE_H * this.zoom,
-      )
+      const dx = screen.x - this.panFrom.x
+      const dy = screen.y - this.panFrom.y
       if (this.pageExceedsView()) {
-        // Zoomed in: drag pans within the page (dragging right reveals the
-        // left edge). Paging is suppressed until you zoom back out.
-        this.offsetX = this.clampOffsetX(this.panFrom.offsetX0 + (screen.x - this.panFrom.x))
+        // Zoomed in past fit: the drag pans within the page on both axes
+        // (dragging right/down reveals the left/top edge). Paging is suppressed
+        // until you zoom back out.
+        this.panX = clampPan(this.panFrom.panX0 + dx, PAGE_W * this.zoom, this.cssW)
+        this.panY = clampPan(this.panFrom.panY0 + dy, PAGE_H * this.zoom, this.cssH)
+      } else if (this.vertical) {
+        // Vertical paging: dragging up (dy < 0) scrolls toward later pages;
+        // left/right pans within the page.
+        this.panX = clampPan(this.panFrom.panX0 + dx, PAGE_W * this.zoom, this.cssW)
+        this.scrollTo(this.panFrom.scroll0 - dy)
       } else {
-        // Dragging left (screen.x decreasing) scrolls toward later pages.
-        this.scrollTo(this.panFrom.scrollX0 + (this.panFrom.x - screen.x))
+        // Horizontal paging: dragging left (dx < 0) scrolls toward later pages;
+        // up/down pans within the page.
+        this.panY = clampPan(this.panFrom.panY0 + dy, PAGE_H * this.zoom, this.cssH)
+        this.scrollTo(this.panFrom.scroll0 - dx)
       }
       this.requestRender()
       return
@@ -957,38 +987,64 @@ export class WhiteboardEngine {
 
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault()
-    // ctrl/meta wheel (and trackpad pinch, which arrives as ctrl+wheel) zooms;
-    // a plain wheel pans vertically within the page.
+    // ctrl/meta wheel (and trackpad pinch, which arrives as ctrl+wheel) zooms.
     if (e.ctrlKey || e.metaKey) {
       const screen = this.screenOf(e.clientX, e.clientY)
       const factor = Math.exp(-e.deltaY * 0.01)
       this.zoomTo(this.zoom * factor, screen.y, screen.x)
+      return
+    }
+    // Plain wheel: in vertical paging it scrolls between pages (with a debounced
+    // snap on settle); otherwise — and whenever zoomed in — it pans vertically
+    // within the page.
+    if (this.vertical && !this.pageExceedsView()) {
+      this.scrollTo(this.scroll + e.deltaY)
+      this.scheduleSnap()
     } else {
-      this.offsetY = clampAxis(this.offsetY - e.deltaY, this.cssH, PAGE_H * this.zoom)
-      this.requestRender()
+      this.panY = clampPan(this.panY - e.deltaY, PAGE_H * this.zoom, this.cssH)
+    }
+    this.requestRender()
+  }
+
+  /** Debounced settle after wheel paging stops (vertical mode): snap to the
+   *  nearest page, or add one if the user wheeled past the last. */
+  private scheduleSnap(): void {
+    this.cancelWheelSnap()
+    this.wheelSnapTimer = window.setTimeout(() => {
+      this.wheelSnapTimer = 0
+      this.panV = 0
+      this.endPan()
+    }, 140)
+  }
+
+  private cancelWheelSnap(): void {
+    if (this.wheelSnapTimer) {
+      window.clearTimeout(this.wheelSnapTimer)
+      this.wheelSnapTimer = 0
     }
   }
 
   /** Zoom to `z`, keeping the page point under (`anchorX`, `anchorY`) fixed. */
   private zoomTo(z: number, anchorY: number, anchorX: number): void {
     const next = clamp(z, this.minZoom(), MAX_ZOOM)
-    const pageY = (anchorY - this.offsetY) / this.zoom
-    // Storage x under the horizontal anchor, captured before the zoom changes.
+    // Storage point under the anchor, captured before the zoom changes.
     const storeX =
       this.pageStorageLeft(this.page) + (anchorX - this.pageScreenLeft(this.page)) / this.zoom
+    const storeY = (anchorY - this.pageScreenTop(this.page)) / this.zoom
 
-    // slotW() depends on zoom, so the active page's resting scroll shifts with
+    // slot() depends on zoom, so the active page's resting scroll shifts with
     // it. Preserve the current scroll deviation (rest vs. mid-page) so paging
     // state survives the zoom instead of snapping back to centered.
-    const slot0 = this.slotW()
+    const slot0 = this.slot()
     this.zoom = next
-    this.scrollX += this.page * (this.slotW() - slot0)
+    this.scroll += this.page * (this.slot() - slot0)
 
-    // Nudge offsetX so the anchored page point lands back under the finger.
+    // Nudge the pans so the anchored page point lands back under the finger.
     const landX =
       this.pageScreenLeft(this.page) + (storeX - this.pageStorageLeft(this.page)) * next
-    this.offsetX = this.clampOffsetX(this.offsetX + (anchorX - landX))
-    this.offsetY = clampAxis(anchorY - pageY * next, this.cssH, PAGE_H * next)
+    const landY = this.pageScreenTop(this.page) + storeY * next
+    this.panX = clampPan(this.panX + (anchorX - landX), PAGE_W * next, this.cssW)
+    this.panY = clampPan(this.panY + (anchorY - landY), PAGE_H * next, this.cssH)
     this.requestRender()
   }
 
@@ -1011,19 +1067,21 @@ export class WhiteboardEngine {
     const midX = (a.x + b.x) / 2
     const midY = (a.y + b.y) / 2
     const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
+    const dMidX = midX - this.gesture.midX
+    const dMidY = midY - this.gesture.midY
 
-    // Horizontal midpoint shift scrolls pages (or pans within a zoomed page);
-    // vertical pans within the page.
+    // Midpoint travel along the paging axis scrolls pages (or pans within a
+    // zoomed page); travel along the cross axis pans within the page.
     if (this.pageExceedsView()) {
-      this.offsetX = this.clampOffsetX(this.offsetX + (midX - this.gesture.midX))
+      this.panX = clampPan(this.panX + dMidX, PAGE_W * this.zoom, this.cssW)
+      this.panY = clampPan(this.panY + dMidY, PAGE_H * this.zoom, this.cssH)
+    } else if (this.vertical) {
+      this.panX = clampPan(this.panX + dMidX, PAGE_W * this.zoom, this.cssW)
+      this.scrollTo(this.scroll - dMidY)
     } else {
-      this.scrollTo(this.scrollX - (midX - this.gesture.midX))
+      this.panY = clampPan(this.panY + dMidY, PAGE_H * this.zoom, this.cssH)
+      this.scrollTo(this.scroll - dMidX)
     }
-    this.offsetY = clampAxis(
-      this.offsetY + (midY - this.gesture.midY),
-      this.cssH,
-      PAGE_H * this.zoom,
-    )
     // Pinch zooms, anchored at the midpoint.
     this.zoomTo((this.zoom * dist) / this.gesture.dist, midY, midX)
 
@@ -1053,10 +1111,10 @@ export class WhiteboardEngine {
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && this.selection.size > 0) {
       e.preventDefault()
       this.deleteSelected()
-    } else if (e.key === 'ArrowRight') {
+    } else if (this.vertical ? e.key === 'ArrowDown' : e.key === 'ArrowRight') {
       e.preventDefault()
       this.goToPage(this.page + 1)
-    } else if (e.key === 'ArrowLeft') {
+    } else if (this.vertical ? e.key === 'ArrowUp' : e.key === 'ArrowLeft') {
       e.preventDefault()
       this.goToPage(this.page - 1)
     }
@@ -1086,6 +1144,7 @@ export class WhiteboardEngine {
       pull: this.pullProgress,
       page: this.currentPage(),
       pageCount: this.numPages(),
+      vertical: this.vertical,
     }
   }
 
@@ -1103,6 +1162,21 @@ export class WhiteboardEngine {
     if (this.showGrid === value) return
     this.showGrid = value
     this.requestRender()
+  }
+
+  /**
+   * Switch the paging axis (Settings toggle). Re-fits the current page in the
+   * new orientation so the camera lands in a clean, predictable state, and
+   * notifies React so overlays (e.g. the pull-to-add affordance) reposition.
+   */
+  setScrollDirection(vertical: boolean): void {
+    if (this.vertical === vertical) return
+    this.vertical = vertical
+    this.cancelWheelSnap()
+    cancelAnimationFrame(this.animRaf)
+    if (this.pullProgress !== 0) this.pullProgress = 0
+    this.fitToPage()
+    this.emit()
   }
 
   /** Set the brush color; also recolors the current selection if any. */
@@ -1189,7 +1263,7 @@ export class WhiteboardEngine {
     this.doc.strokes = kept
     this.doc.pageCount = n - 1
     this.page = clamp(p, 0, this.numPages() - 1)
-    this.scrollX = this.restScroll(this.page)
+    this.scroll = this.restScroll(this.page)
     this.selection.clear()
     this.pathCache.clear() // shifted coordinates invalidate cached paths
     this.commit()
@@ -1221,6 +1295,7 @@ export class WhiteboardEngine {
     this.disposed = true
     cancelAnimationFrame(this.rafId)
     cancelAnimationFrame(this.animRaf)
+    this.cancelWheelSnap()
     if (this.saveTimer) {
       window.clearTimeout(this.saveTimer)
       // Flush a final write so the last strokes aren't lost on unmount.

@@ -41,6 +41,12 @@ body.whiteboard-mode #root {
 html.native .canvas-menu header.bar {
   padding-top: calc(22px + env(safe-area-inset-top));
 }
+/* The slide-out menu drawer is pinned to top:0, so its "Menu" header and nav
+ * buttons render under the status-bar clock. Pad its contents below the safe
+ * area (plus a little breathing room) on the native build. */
+html.native .canvas-menu .sidebar {
+  padding-top: calc(env(safe-area-inset-top) + 8px);
+}
 html.native .canvas-menu .container {
   padding-left: calc(28px + env(safe-area-inset-left));
   padding-right: calc(28px + env(safe-area-inset-right));

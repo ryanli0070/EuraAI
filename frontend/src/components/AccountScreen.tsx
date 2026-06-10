@@ -22,7 +22,12 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { useSession } from '../lib/auth'
-import { getShowGrid, setShowGrid } from '../lib/settings'
+import {
+  getScrollVertical,
+  getShowGrid,
+  setScrollVertical,
+  setShowGrid,
+} from '../lib/settings'
 
 export type AccountScreenId = 'profile' | 'settings' | 'payments' | 'help'
 
@@ -151,10 +156,16 @@ function ProfileScreen({ user }: { user: User | null }) {
 
 function SettingsScreen() {
   const [grid, setGrid] = useState(getShowGrid)
+  const [verticalScroll, setVerticalScroll] = useState(getScrollVertical)
 
   const updateGrid = (value: boolean) => {
     setGrid(value)
     setShowGrid(value)
+  }
+
+  const updateVerticalScroll = (value: boolean) => {
+    setVerticalScroll(value)
+    setScrollVertical(value)
   }
 
   return (
@@ -167,6 +178,12 @@ function SettingsScreen() {
             sub="Faint grid behind your work on the page"
             value={grid}
             onChange={updateGrid}
+          />
+          <ToggleRow
+            label="Vertical scrolling"
+            sub="Swipe up to move between pages and add new ones, instead of sideways"
+            value={verticalScroll}
+            onChange={updateVerticalScroll}
           />
         </div>
       </section>
@@ -185,7 +202,7 @@ function SettingsScreen() {
         </div>
       </section>
 
-      <p className="acct-foot">Grid preference is saved on this device — account-wide sync is coming soon.</p>
+      <p className="acct-foot">Preferences are saved on this device — account-wide sync is coming soon.</p>
     </>
   )
 }

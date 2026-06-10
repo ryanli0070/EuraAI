@@ -22,7 +22,7 @@ import {
   setThumbnail,
 } from '../lib/canvasStore'
 import { apiFetch } from '../lib/api'
-import { getShowGrid, subscribeSettings } from '../lib/settings'
+import { getScrollVertical, getShowGrid, subscribeSettings } from '../lib/settings'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -86,6 +86,7 @@ const DEFAULT_ENGINE_STATE: EngineState = {
   pull: 0,
   page: 0,
   pageCount: 1,
+  vertical: false,
 }
 
 export function Whiteboard({
@@ -111,14 +112,16 @@ export function Whiteboard({
   const handleMount = useCallback((engine: WhiteboardEngine) => {
     engineRef.current = engine
     engine.setShowGrid(getShowGrid())
+    engine.setScrollDirection(getScrollVertical())
     setEngineState(engine.getState())
     engine.subscribe(() => setEngineState(engine.getState()))
   }, [])
 
-  // Keep the live page's grid in sync with the Settings toggle.
+  // Keep the live page's grid + scroll direction in sync with the Settings toggles.
   useEffect(() => {
     return subscribeSettings(() => {
       engineRef.current?.setShowGrid(getShowGrid())
+      engineRef.current?.setScrollDirection(getScrollVertical())
     })
   }, [])
 
@@ -313,7 +316,9 @@ export function Whiteboard({
     <div className="fixed inset-0">
       <Canvas canvasId={canvasId} onMount={handleMount} />
 
-      {engineState.pull > 0 && <PullToAddPage progress={engineState.pull} />}
+      {engineState.pull > 0 && (
+        <PullToAddPage progress={engineState.pull} vertical={engineState.vertical} />
+      )}
 
       {engineState.pageCount > 1 && (
         <PageControls
@@ -492,17 +497,23 @@ function HomeButton({ onHome }: { onHome?: () => void }) {
 /**
  * GoodNotes-style affordance shown while the user drags past the last page.
  * A ring fills as they pull; at 100% the copy flips to "release to add page".
- * Purely decorative — pointer-events are off so it never eats the drag.
+ * Purely decorative — pointer-events are off so it never eats the drag. Anchors
+ * to the edge the new page slides in from: the right while paging horizontally,
+ * the bottom while paging vertically.
  */
-function PullToAddPage({ progress }: { progress: number }) {
+function PullToAddPage({ progress, vertical }: { progress: number; vertical: boolean }) {
   const p = Math.min(1, Math.max(0, progress))
   const ready = p >= 1
   const r = 22
   const circumference = 2 * Math.PI * r
   const accent = ready ? '#16a34a' : '#2563eb'
 
+  const anchorClass = vertical
+    ? 'bottom-24 left-1/2 -translate-x-1/2'
+    : 'right-6 top-1/2 -translate-y-1/2'
+
   return (
-    <div className="pointer-events-none absolute right-6 top-1/2 z-[1000] -translate-y-1/2">
+    <div className={`pointer-events-none absolute z-[1000] ${anchorClass}`}>
       <div
         className="flex w-28 flex-col items-center gap-2 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-3 text-center shadow-xl backdrop-blur"
         style={{ transform: `scale(${0.92 + 0.08 * p})` }}
