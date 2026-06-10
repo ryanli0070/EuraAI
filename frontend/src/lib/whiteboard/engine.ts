@@ -235,7 +235,11 @@ export class WhiteboardEngine {
   private pageOfStroke(s: Stroke): number {
     const b = strokeBounds(s)
     const cx = (b.minX + b.maxX) / 2
-    return clamp(Math.round(cx / PAGE_STRIDE), 0, this.numPages() - 1)
+    // Page `i` occupies x ∈ [i·STRIDE, i·STRIDE + PAGE_W]. Round relative to each
+    // page's CENTER (not its left edge) so a stroke anywhere on the sheet maps
+    // back to its own page — otherwise the right ~40% of a page rounds up to the
+    // next page and gets clipped away on commit (vanishing on pencil-up).
+    return clamp(Math.round((cx - PAGE_W / 2) / PAGE_STRIDE), 0, this.numPages() - 1)
   }
 
   /** The settled page in view — what "Check Work" / thumbnails capture. */
