@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Keyboard } from '@capacitor/keyboard'
 import { resetPassword, signIn, signUp } from '../lib/auth'
-import { hapticTap } from '../lib/native'
+import { hapticTap, isNative } from '../lib/native'
 
 type Mode = 'signin' | 'signup' | 'reset'
 
@@ -96,6 +97,24 @@ export function AuthScreen() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [kbInset, setKbInset] = useState(0)
+
+  // iOS: the soft keyboard overlays the WebView (global Keyboard.resize is
+  // 'none', to keep it off the whiteboard canvas). So here we listen for the
+  // keyboard and shrink the centering area to the space above it, lifting the
+  // email/password card into view instead of leaving it hidden behind it.
+  // No-op on web — `isNative` is false there.
+  useEffect(() => {
+    if (!isNative) return
+    const show = Keyboard.addListener('keyboardWillShow', (info) =>
+      setKbInset(info.keyboardHeight),
+    )
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKbInset(0))
+    return () => {
+      void show.then((h) => h.remove())
+      void hide.then((h) => h.remove())
+    }
+  }, [])
 
   const reset = () => {
     setError(null)
@@ -139,7 +158,14 @@ export function AuthScreen() {
     : (submitting ? 'Sending…' : 'Send reset email')
 
   return (
-    <div className="auth-screen">
+    <div
+      className="auth-screen"
+      style={
+        kbInset
+          ? { minHeight: 0, height: `calc(100vh - ${kbInset}px)`, overflowY: 'auto' }
+          : undefined
+      }
+    >
       <style>{STYLES}</style>
       <div className="card">
         <div className="brand">Eura</div>
