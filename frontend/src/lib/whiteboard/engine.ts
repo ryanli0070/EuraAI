@@ -78,9 +78,13 @@ function clamp(v: number, lo: number, hi: number): number {
  * the same logic drives both the horizontal (`panX`) and vertical (`panY`) pans.
  */
 function clampPan(delta: number, pagePx: number, viewport: number): number {
-  const overflow = (pagePx - viewport) / 2
-  if (overflow <= 0) return clamp(delta, -PAN_WIGGLE, PAN_WIGGLE)
-  return clamp(delta, -overflow - PAN_WIGGLE, overflow + PAN_WIGGLE)
+  // The view STAYS where the user puts it — no forced re-centering. The page can
+  // slide until its far edge reaches the viewport edge (plus a little wiggle),
+  // whether it's larger OR smaller than the viewport. When it fits, that means
+  // you can freely reposition it within the empty desk instead of being snapped
+  // back to the middle. Double-tap fits/recenters on demand.
+  const range = Math.abs(pagePx - viewport) / 2 + PAN_WIGGLE
+  return clamp(delta, -range, range)
 }
 
 type Listener = () => void
@@ -146,6 +150,10 @@ export class WhiteboardEngine {
       }
     | null = null
   private panV = 0 // pointer velocity along the paging axis (px/ms), for swipe detection
+  // Double-tap-to-recenter detection (finger taps).
+  private lastTapT = 0
+  private lastTapX = 0
+  private lastTapY = 0
 
   // Multi-touch gesture state (two-finger pan + pinch zoom).
   private pointers = new Map<number, { x: number; y: number }>()
@@ -688,6 +696,22 @@ export class WhiteboardEngine {
     // the active tool. Goodnotes-style: tool selection applies to the
     // Pencil; the finger is reserved for scrolling the board.
     if (e.pointerType === 'touch') {
+      // Double-tap with a finger fits + recenters the page ("flip back to the
+      // middle" on demand). Two quick taps near the same spot — distinct from a
+      // pan (which moves) so it never interferes with scrolling.
+      const t = performance.now()
+      if (
+        t - this.lastTapT < 300 &&
+        Math.abs(screen.x - this.lastTapX) < 24 &&
+        Math.abs(screen.y - this.lastTapY) < 24
+      ) {
+        this.lastTapT = 0
+        this.fitToPage()
+        return
+      }
+      this.lastTapT = t
+      this.lastTapX = screen.x
+      this.lastTapY = screen.y
       this.beginPan(screen)
       return
     }
