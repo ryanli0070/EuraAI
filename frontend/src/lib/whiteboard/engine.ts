@@ -115,12 +115,17 @@ export class WhiteboardEngine {
   private cssW = 0
   private cssH = 0
 
-  // Pre-rendered "page sheet + soft drop shadow" sprite, blitted each frame
-  // instead of recomputing an expensive ctx.shadowBlur per page per frame.
-  // Regenerated only when the on-screen page size changes (zoom/resize/dpr), so
-  // paging swipes (constant zoom) cost nothing here. Keyed on those dimensions.
+  // Pre-rendered "page sheet + soft drop shadow" sprite, blitted (scaled) each
+  // frame instead of recomputing an expensive ctx.shadowBlur per page per frame.
+  // Built ONCE at a fixed fit-zoom base size (not the live zoomed size) and
+  // stretched with drawImage when blitting — so pinch-zoom never rebuilds the
+  // blur, and the backing store stays small enough to never hit the iOS
+  // canvas-size limit (which silently blanks oversized canvases). Regenerated
+  // only on resize/dpr change. `shadowBaseW` is the sprite's page width (CSS px)
+  // used to derive the base→screen scale factor.
   private shadowSprite: HTMLCanvasElement | null = null
   private shadowKey = ''
+  private shadowBaseW = 0
 
   private doc: WhiteboardDoc
   private history: History
@@ -388,18 +393,24 @@ export class WhiteboardEngine {
   }
 
   /**
-   * Build (or reuse) the offscreen sheet+shadow sprite for a page drawn at the
-   * current on-screen size. The expensive blur runs only here, and only when
-   * the page's screen size changes — so a paging swipe (constant zoom) reuses
-   * the cached sprite and never pays the blur cost per frame.
+   * Build (or reuse) the offscreen sheet+shadow sprite at a FIXED fit-zoom base
+   * size — independent of the live zoom. The expensive blur runs only here, and
+   * only when the viewport/dpr changes (resize), so zooming and paging reuse the
+   * cached sprite and never pay the blur cost per frame. Blitting scales it to
+   * the on-screen page size with drawImage (a cheap GPU op). Keeping the base
+   * small also keeps the backing store well under the iOS canvas-size limit, so
+   * it never blanks out the way a zoom-sized sprite did.
    */
-  private ensureShadowSprite(sw: number, sh: number): HTMLCanvasElement {
-    const w = Math.round(sw)
-    const h = Math.round(sh)
-    const key = `${w}x${h}@${this.dpr}`
+  private ensureShadowSprite(): HTMLCanvasElement {
+    const dpr = this.dpr
+    // Base the sprite on the page at fit-zoom (constant for a given viewport):
+    // 1:1 with the shadow at the common viewing scale, and bounded in size.
+    const fz = Math.max(this.fitZoom(), MIN_ZOOM)
+    const w = Math.max(1, Math.round(PAGE_W * fz))
+    const h = Math.max(1, Math.round(PAGE_H * fz))
+    const key = `${w}x${h}@${dpr}`
     if (this.shadowSprite && this.shadowKey === key) return this.shadowSprite
 
-    const dpr = this.dpr
     const sprite = this.shadowSprite ?? document.createElement('canvas')
     sprite.width = Math.round((w + SHADOW_PAD * 2) * dpr)
     sprite.height = Math.round((h + SHADOW_PAD * 2) * dpr)
@@ -414,6 +425,7 @@ export class WhiteboardEngine {
 
     this.shadowSprite = sprite
     this.shadowKey = key
+    this.shadowBaseW = w
     return sprite
   }
 
@@ -439,15 +451,30 @@ export class WhiteboardEngine {
     }
 
     // Paper sheets with a soft drop shadow. ctx.shadowBlur is very expensive on
-    // mobile WebKit, so the sheet+shadow is pre-rendered once into a sprite and
-    // blitted here — no per-frame blur, which keeps paging smooth on device.
-    const sprite = this.ensureShadowSprite(sw, sh)
-    ctx.setTransform(1, 0, 0, 1, 0, 0) // device pixels — blit the sprite 1:1
+    // mobile WebKit, so the shadow is pre-rendered once into a fixed-size sprite
+    // and blitted (scaled) here — no per-frame blur, which keeps paging and
+    // zooming smooth on device. The white sheet itself is filled directly in
+    // device pixels so it stays crisp and can never blank out, regardless of how
+    // far the page is zoomed in.
+    const sprite = this.ensureShadowSprite()
+    const f = sw / this.shadowBaseW // base(fit-zoom) → on-screen scale factor
+    const pad = SHADOW_PAD * f
+    ctx.setTransform(1, 0, 0, 1, 0, 0) // device pixels
     for (let i = 0; i < n; i++) {
       const left = this.pageScreenLeft(i)
       const top = this.pageScreenTop(i)
       if (left >= this.cssW || left + sw <= 0 || top >= this.cssH || top + sh <= 0) continue
-      ctx.drawImage(sprite, Math.round((left - SHADOW_PAD) * dpr), Math.round((top - SHADOW_PAD) * dpr))
+      // Soft drop shadow, scaled from the fixed-size sprite.
+      ctx.drawImage(
+        sprite,
+        Math.round((left - pad) * dpr),
+        Math.round((top - pad) * dpr),
+        Math.round((sw + pad * 2) * dpr),
+        Math.round((sh + pad * 2) * dpr),
+      )
+      // Crisp white sheet on top of the shadow.
+      ctx.fillStyle = PAGE_BG
+      ctx.fillRect(Math.round(left * dpr), Math.round(top * dpr), Math.round(sw * dpr), Math.round(sh * dpr))
     }
 
     // Decor + ink, page by page, each drawn from its own storage origin.
