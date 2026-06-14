@@ -9,7 +9,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const devServerUrl = process.env.CAP_SERVER_URL;
 
 const config: CapacitorConfig = {
-  appId: 'app.euraai',
+  appId: 'com.euralearn.eura',
   appName: 'EuraAI',
   webDir: 'dist',
   ...(devServerUrl
