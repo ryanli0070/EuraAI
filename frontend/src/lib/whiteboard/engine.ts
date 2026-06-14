@@ -59,6 +59,11 @@ const DESK_BG = '#e9e7e0'
 const PAGE_BG = '#ffffff'
 const PAGE_SHADOW = 'rgba(24,36,63,0.20)'
 const PAGE_BORDER = 'rgba(24,36,63,0.12)'
+const SHADOW_BLUR = 28 // soft drop-shadow blur behind each page sheet (screen px)
+const SHADOW_OFFSET_Y = 10 // shadow drop (screen px)
+// Padding around the page in the cached shadow sprite — must cover the blur
+// spread plus the downward offset so the soft edge isn't clipped.
+const SHADOW_PAD = SHADOW_BLUR * 2 + SHADOW_OFFSET_Y
 const GRID_LINE = 'rgba(60,90,150,0.10)'
 
 function uid(): string {
@@ -87,6 +92,19 @@ function clampPan(delta: number, pagePx: number, viewport: number): number {
   return clamp(delta, -range, range)
 }
 
+/**
+ * Resting within-page pan for one axis so the view ends up FULLY on the page on
+ * release: centered (0) when the page fits the viewport on that axis, otherwise
+ * the current pan clamped flush to the page edges — no desk gap and no over-pan
+ * wiggle. This is what bounces an over-drag back onto the page. (Live dragging
+ * still uses clampPan for the rubber-band feel; this only applies on settle.)
+ */
+function restPan(current: number, pagePx: number, viewport: number): number {
+  if (pagePx <= viewport) return 0
+  const range = (pagePx - viewport) / 2
+  return clamp(current, -range, range)
+}
+
 type Listener = () => void
 
 export class WhiteboardEngine {
@@ -96,6 +114,13 @@ export class WhiteboardEngine {
   private dpr = 1
   private cssW = 0
   private cssH = 0
+
+  // Pre-rendered "page sheet + soft drop shadow" sprite, blitted each frame
+  // instead of recomputing an expensive ctx.shadowBlur per page per frame.
+  // Regenerated only when the on-screen page size changes (zoom/resize/dpr), so
+  // paging swipes (constant zoom) cost nothing here. Keyed on those dimensions.
+  private shadowSprite: HTMLCanvasElement | null = null
+  private shadowKey = ''
 
   private doc: WhiteboardDoc
   private history: History
@@ -362,6 +387,36 @@ export class WhiteboardEngine {
     return path
   }
 
+  /**
+   * Build (or reuse) the offscreen sheet+shadow sprite for a page drawn at the
+   * current on-screen size. The expensive blur runs only here, and only when
+   * the page's screen size changes — so a paging swipe (constant zoom) reuses
+   * the cached sprite and never pays the blur cost per frame.
+   */
+  private ensureShadowSprite(sw: number, sh: number): HTMLCanvasElement {
+    const w = Math.round(sw)
+    const h = Math.round(sh)
+    const key = `${w}x${h}@${this.dpr}`
+    if (this.shadowSprite && this.shadowKey === key) return this.shadowSprite
+
+    const dpr = this.dpr
+    const sprite = this.shadowSprite ?? document.createElement('canvas')
+    sprite.width = Math.round((w + SHADOW_PAD * 2) * dpr)
+    sprite.height = Math.round((h + SHADOW_PAD * 2) * dpr)
+    const sctx = sprite.getContext('2d')!
+    sctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    sctx.clearRect(0, 0, sprite.width, sprite.height)
+    sctx.shadowColor = PAGE_SHADOW
+    sctx.shadowBlur = SHADOW_BLUR
+    sctx.shadowOffsetY = SHADOW_OFFSET_Y
+    sctx.fillStyle = PAGE_BG
+    sctx.fillRect(SHADOW_PAD, SHADOW_PAD, w, h)
+
+    this.shadowSprite = sprite
+    this.shadowKey = key
+    return sprite
+  }
+
   private render(): void {
     const { ctx, dpr } = this
     const z = this.zoom
@@ -383,19 +438,17 @@ export class WhiteboardEngine {
       else byPage.set(pi, [s])
     }
 
-    // Paper sheets with a soft drop shadow — screen space for a crisp shadow.
-    ctx.save()
-    ctx.shadowColor = PAGE_SHADOW
-    ctx.shadowBlur = 28
-    ctx.shadowOffsetY = 10
-    ctx.fillStyle = PAGE_BG
+    // Paper sheets with a soft drop shadow. ctx.shadowBlur is very expensive on
+    // mobile WebKit, so the sheet+shadow is pre-rendered once into a sprite and
+    // blitted here — no per-frame blur, which keeps paging smooth on device.
+    const sprite = this.ensureShadowSprite(sw, sh)
+    ctx.setTransform(1, 0, 0, 1, 0, 0) // device pixels — blit the sprite 1:1
     for (let i = 0; i < n; i++) {
       const left = this.pageScreenLeft(i)
       const top = this.pageScreenTop(i)
       if (left >= this.cssW || left + sw <= 0 || top >= this.cssH || top + sh <= 0) continue
-      ctx.fillRect(left, top, sw, sh)
+      ctx.drawImage(sprite, Math.round((left - SHADOW_PAD) * dpr), Math.round((top - SHADOW_PAD) * dpr))
     }
-    ctx.restore()
 
     // Decor + ink, page by page, each drawn from its own storage origin.
     for (let i = 0; i < n; i++) {
@@ -554,14 +607,25 @@ export class WhiteboardEngine {
     }
   }
 
-  /** Settle a pan/swipe: add a page if pulled far enough, else snap to a page. */
+  /** Resting within-page pan that bounces the view fully back onto the page. */
+  private restPanX(): number {
+    return restPan(this.panX, PAGE_W * this.zoom, this.cssW)
+  }
+  private restPanY(): number {
+    return restPan(this.panY, PAGE_H * this.zoom, this.cssH)
+  }
+
+  /** Settle a pan/swipe: add a page if pulled far enough, else snap to a page
+   *  and bounce the view fully back onto it. */
   private endPan(): void {
-    // Zoomed in, horizontal drags pan within the page — there's nothing to
-    // snap or flick to, so leave the within-page pan where the user left it.
+    // Zoomed in past fit (page larger than the viewport along the paging axis):
+    // there's no page to flick to, so keep the user's position — but still bounce
+    // any over-pan flush to the page edges so no desk shows through.
     if (this.pageExceedsView()) {
-      this.requestRender()
+      this.animateCamera(this.scroll, this.restPanX(), this.restPanY())
       return
     }
+    // Dragged far enough past the last page → add a new one.
     if (this.pullProgress >= 1) {
       this.pullProgress = 0
       this.addPage()
@@ -589,29 +653,37 @@ export class WhiteboardEngine {
     this.doc.pageCount = this.numPages() + 1
     this.page = this.numPages() - 1
     this.commit()
-    this.animateScrollTo(this.restScroll(this.page))
+    this.animateCamera(this.restScroll(this.page), this.restPanX(), this.restPanY())
   }
 
-  /** Animate to a given page index, updating the settled page. */
+  /** Animate to a given page index, updating the settled page. The page lands
+   *  centered along the paging axis and bounced fully onto the page across it. */
   private goToPage(i: number): void {
     const dest = clamp(i, 0, this.numPages() - 1)
     if (dest !== this.page) {
       this.page = dest
       this.emit()
     }
-    // Land on the page centered along the paging axis (drop any within-page pan
-    // on that axis); the cross-axis position is preserved.
-    if (this.vertical) this.panY = 0
-    else this.panX = 0
-    this.animateScrollTo(this.restScroll(dest))
+    // restPanX/restPanY return 0 on whichever axis the page fits (the paging
+    // axis always fits here, so its within-page pan zeroes out), and clamp flush
+    // on an axis that's zoomed larger than the viewport.
+    this.animateCamera(this.restScroll(dest), this.restPanX(), this.restPanY())
   }
 
-  /** Tween `scroll` to a target with an easeOutCubic over SNAP_MS. */
-  private animateScrollTo(target: number): void {
+  /** Tween the camera (paging scroll + within-page pan) to targets with an
+   *  easeOutCubic over SNAP_MS, so over-drags spring back onto the page. */
+  private animateCamera(scrollT: number, panXT: number, panYT: number): void {
     cancelAnimationFrame(this.animRaf)
-    const start = this.scroll
-    if (Math.abs(target - start) < 0.5) {
-      this.scroll = target
+    const s0 = this.scroll
+    const x0 = this.panX
+    const y0 = this.panY
+    const ds = scrollT - s0
+    const dx = panXT - x0
+    const dy = panYT - y0
+    if (Math.abs(ds) < 0.5 && Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) {
+      this.scroll = scrollT
+      this.panX = panXT
+      this.panY = panYT
       this.requestRender()
       return
     }
@@ -619,7 +691,9 @@ export class WhiteboardEngine {
     const step = (now: number) => {
       const t = Math.min(1, (now - t0) / SNAP_MS)
       const e = 1 - Math.pow(1 - t, 3)
-      this.scroll = start + (target - start) * e
+      this.scroll = s0 + ds * e
+      this.panX = x0 + dx * e
+      this.panY = y0 + dy * e
       this.requestRender()
       if (t < 1 && !this.disposed) this.animRaf = requestAnimationFrame(step)
     }

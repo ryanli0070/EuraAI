@@ -90,8 +90,6 @@ function ProfileScreen({ user }: { user: User | null }) {
   const memberSince = user?.created_at
     ? new Date(user.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
     : '—'
-  const initialName = (user?.user_metadata?.display_name as string | undefined) ?? ''
-  const [name, setName] = useState(initialName)
 
   return (
     <>
@@ -107,22 +105,8 @@ function ProfileScreen({ user }: { user: User | null }) {
         <div className="label">Your details</div>
         <div className="acct-card">
           <div className="field">
-            <label htmlFor="pf-name">Display name</label>
-            <input
-              id="pf-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Add a name"
-            />
-          </div>
-          <div className="field">
             <label htmlFor="pf-email">Email</label>
             <input id="pf-email" value={email} readOnly />
-          </div>
-          <div className="btn-row">
-            <button type="button" className="acct-btn" disabled>
-              Save changes <span className="soon">Soon</span>
-            </button>
           </div>
         </div>
       </section>
@@ -409,7 +393,7 @@ const STYLES = `
 .account-screen > *{position:relative;z-index:1}
 
 .account-screen .acct-bar{
-  display:flex;align-items:center;gap:14px;padding:18px 20px;
+  display:flex;align-items:center;gap:14px;padding:22px 20px;
   border-bottom:1.5px solid var(--ink);background:var(--paper);flex-shrink:0;
 }
 .account-screen .acct-back{

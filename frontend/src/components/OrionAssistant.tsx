@@ -341,7 +341,13 @@ const STYLES = `
      top-middle ON TOP of the work rather than covering it. */
   max-height:min(42vh, 340px);
   border-radius:18px;
+  /* Solid white pop-out (not frosted glass) — override the .orion-glass look. */
+  background: #fff;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
+/* No colored halo inside the solid panel; keep it clean white. */
+.orion-box .orion-glow{ display:none; }
 
 .orion-head{
   position:relative; z-index:2;
@@ -362,7 +368,9 @@ const STYLES = `
      box instead of overflowing the input row off the bottom (the "cutoff"). */
   flex:1 1 auto; min-height:0;
 }
-.orion-empty{ margin:auto; text-align:center; color:var(--orion-ink-soft); padding:14px 8px; }
+/* Extra bottom padding lifts the centered placeholder text upward so it reads
+   as vertically balanced within the box (header above eats visual space). */
+.orion-empty{ margin:auto; text-align:center; color:var(--orion-ink-soft); padding:14px 8px 46px; }
 .orion-empty p{ margin:0; font:450 13px/1.5 var(--ui); }
 .orion-empty-lead{ font-weight:600 !important; color:var(--orion-ink) !important; margin-bottom:4px !important; }
 

@@ -41,6 +41,12 @@ body.whiteboard-mode #root {
 html.native .canvas-menu header.bar {
   padding-top: calc(22px + env(safe-area-inset-top));
 }
+/* The account screens (Profile, Settings, Payments, Help) are full-screen
+ * overlays whose header is pinned to top:0, so their title renders under the
+ * status-bar clock. Pad below the safe area to match the home header above. */
+html.native .account-screen .acct-bar {
+  padding-top: calc(22px + env(safe-area-inset-top));
+}
 /* The slide-out menu drawer is pinned to top:0, so its "Menu" header and nav
  * buttons render under the status-bar clock. Pad its contents below the safe
  * area (plus a little breathing room) on the native build. */
