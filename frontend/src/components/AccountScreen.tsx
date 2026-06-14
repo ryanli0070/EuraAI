@@ -294,21 +294,23 @@ function HelpScreen() {
         <div className="acct-card">
           <a
             className="acct-row as-button"
-            href="#"
-            onClick={(e) => e.preventDefault()}
+            href="https://euralearn.com/terms"
+            target="_blank"
+            rel="noopener noreferrer"
           >
             <span className="row-icon"><FileText size={18} /></span>
             <span className="row-main"><span className="row-label">Terms of Service</span></span>
-            <span className="soon">Soon</span>
+            <ExternalLink size={16} className="row-chev" />
           </a>
           <a
             className="acct-row as-button"
-            href="#"
-            onClick={(e) => e.preventDefault()}
+            href="https://euralearn.com/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
           >
             <span className="row-icon"><ShieldCheck size={18} /></span>
             <span className="row-main"><span className="row-label">Privacy Policy</span></span>
-            <span className="soon">Soon</span>
+            <ExternalLink size={16} className="row-chev" />
           </a>
           <div className="acct-row">
             <span className="row-main"><span className="row-label">Version</span></span>

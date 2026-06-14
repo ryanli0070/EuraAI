@@ -88,6 +88,10 @@ const STYLES = `
   text-align:center;margin-bottom:24px;
   font-family:var(--sans);font-weight:500;font-size:22px;letter-spacing:-0.01em;
 }
+.auth-screen .auth-agree{
+  margin:16px 0 0;font-size:12px;line-height:1.5;color:var(--pencil);text-align:center;
+}
+.auth-screen .auth-agree a{color:var(--accent);text-decoration:underline}
 `
 
 export function AuthScreen() {
@@ -207,6 +211,15 @@ export function AuthScreen() {
             {submitLabel}
           </button>
         </form>
+
+        {mode === 'signup' && (
+          <p className="auth-agree">
+            By creating an account, you confirm you're 13 or older and agree to our{' '}
+            <a href="https://euralearn.com/terms" target="_blank" rel="noopener noreferrer">Terms</a>
+            {' '}and{' '}
+            <a href="https://euralearn.com/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+          </p>
+        )}
 
         <div className="links">
           {mode === 'signin' ? (
