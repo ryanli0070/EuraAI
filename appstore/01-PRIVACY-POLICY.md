@@ -1,10 +1,10 @@
 # Privacy Policy — Eura
 
-**Effective date: June 11, 2026**
+**Effective date: June 14, 2026**
 
 This Privacy Policy explains how **Eura** (the "App," "we," "us," or "our") collects, uses, and protects your information. Eura is a math-tutoring application where students draw their work on a canvas and receive AI-assisted feedback from **Orion**, the App's in-app AI tutor.
 
-The App is operated by **[YOUR FULL LEGAL NAME]**, an individual sole proprietor ("we"). If you have any questions, contact us at **ryanlivaughan@gmail.com**.
+The App is operated by **Ryan Li**, an individual sole proprietor ("we"). If you have any questions, contact us at **ryanlivaughan@gmail.com**.
 
 > **Plain-language summary:** We collect your email to create your account, and we store the work you create in the App (your drawings, canvases, and chat with the tutor). To give you feedback, images of your work are sent to OpenAI for analysis. We don't show ads, we don't sell your data, and we don't track you across other apps or websites. You can delete your account and all of your data at any time from within the App.
 
@@ -94,9 +94,9 @@ We may update this Privacy Policy from time to time. When we do, we will revise 
 
 Questions or requests about this policy or your data:
 
-**[YOUR FULL LEGAL NAME]**
+**Ryan Li**
 Email: **ryanlivaughan@gmail.com**
-[Mailing address — optional but recommended]
+86 Oberfrick Ave, Vaughan, ON L6A 0N9, Canada
 
 ---
 
