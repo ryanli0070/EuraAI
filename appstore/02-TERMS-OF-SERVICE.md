@@ -1,8 +1,8 @@
 # Terms of Use / End-User License Agreement — Eura
 
-**Effective date: June 11, 2026**
+**Effective date: June 14, 2026**
 
-These Terms of Use ("Terms") are a binding agreement between you and **[YOUR FULL LEGAL NAME]**, an individual sole proprietor ("we," "us," or "our"), governing your use of the **Eura** mobile application (the "App"), including its in-app AI tutor, **Orion**. By creating an account or using the App, you agree to these Terms and to our [Privacy Policy](./01-PRIVACY-POLICY.md). If you do not agree, do not use the App.
+These Terms of Use ("Terms") are a binding agreement between you and **Connor Tan**, an individual sole proprietor ("we," "us," or "our"), governing your use of the **Eura** mobile application (the "App"), including its in-app AI tutor, **Orion**. By creating an account or using the App, you agree to these Terms and to our [Privacy Policy](./01-PRIVACY-POLICY.md). If you do not agree, do not use the App.
 
 > This is also the **End-User License Agreement (EULA)** required by Apple. It applies in addition to, and where it conflicts with, Apple's standard [Licensed Application End User License Agreement](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/), the stricter term controls.
 
@@ -14,7 +14,7 @@ You must be at least **13 years old** to use the App. By using it, you represent
 
 ## 2. Your account
 
-You need an account to use the App. You agree to provide accurate information, keep your password secure, and are responsible for activity under your account. Notify us at **ryanlivaughan@gmail.com** if you suspect unauthorized use. You may delete your account at any time from within the App.
+You need an account to use the App. You agree to provide accurate information, keep your password secure, and are responsible for activity under your account. Notify us at **connorxtan@gmail.com** if you suspect unauthorized use. You may delete your account at any time from within the App.
 
 ## 3. License
 
@@ -74,7 +74,7 @@ You may stop using the App and delete your account at any time. We may suspend o
 
 ## 15. Governing law
 
-These Terms are governed by the laws of the State of **[YOUR STATE]**, USA, without regard to its conflict-of-laws rules. You and we agree to the exclusive jurisdiction of the state and federal courts located in **[YOUR STATE]** for any dispute not subject to arbitration, where permitted by law.
+These Terms are governed by the laws of the **Province of Ontario** and the federal laws of Canada applicable therein, without regard to its conflict-of-laws rules. You and we agree to the exclusive jurisdiction of the courts located in **Ontario, Canada** for any dispute not subject to arbitration, where permitted by law.
 
 ## 16. Changes to these Terms
 
@@ -86,7 +86,7 @@ You acknowledge that these Terms are between you and us, not Apple, and that App
 
 ## 18. Contact
 
-**[YOUR FULL LEGAL NAME]** — Email: **ryanlivaughan@gmail.com**
+**Connor Tan** — Email: **connorxtan@gmail.com**
 
 ---
 

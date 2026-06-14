@@ -62,12 +62,12 @@ _(96 chars. Don't repeat words already in the app name; don't use competitor nam
 ## Support URL (required)
 
 You need a reachable support page. Simplest options:
-- A one-page site (e.g., `https://eura.app/support`) with a short FAQ + your contact email **ryanlivaughan@gmail.com**, or
+- A one-page site (e.g., `https://eura.app/support`) with a short FAQ + your contact email **eura@euralearn.com**, or
 - A `mailto:` landing page.
 
 Suggested support-page text:
 
-> **Eura Support** — Need help? Email us at ryanlivaughan@gmail.com and we'll get back to you. Common topics: signing in, resetting your password, deleting your account (Settings → Delete Account), and reporting a bug.
+> **Eura Support** — Need help? Email us at eura@euralearn.com and we'll get back to you. Common topics: signing in, resetting your password, deleting your account (Settings → Delete Account), and reporting a bug.
 
 ## Marketing URL (optional)
 

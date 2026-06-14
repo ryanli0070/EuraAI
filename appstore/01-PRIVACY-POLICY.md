@@ -4,7 +4,7 @@
 
 This Privacy Policy explains how **Eura** (the "App," "we," "us," or "our") collects, uses, and protects your information. Eura is a math-tutoring application where students draw their work on a canvas and receive AI-assisted feedback from **Orion**, the App's in-app AI tutor.
 
-The App is operated by **Ryan Li**, an individual sole proprietor ("we"). If you have any questions, contact us at **ryanlivaughan@gmail.com**.
+The App is operated by **Connor Tan**, an individual sole proprietor ("we"). If you have any questions, contact us at **connorxtan@gmail.com**.
 
 > **Plain-language summary:** We collect your email to create your account, and we store the work you create in the App (your drawings, canvases, and chat with the tutor). To give you feedback, images of your work are sent to OpenAI for analysis. We don't show ads, we don't sell your data, and we don't track you across other apps or websites. You can delete your account and all of your data at any time from within the App.
 
@@ -12,7 +12,7 @@ The App is operated by **Ryan Li**, an individual sole proprietor ("we"). If you
 
 ## 1. Who can use the App (age requirement)
 
-The App is intended for users **13 years of age and older**. We do not knowingly create accounts for, or collect personal information from, children under 13. When you sign up, we ask you to confirm you meet the minimum age. If you believe a child under 13 has provided us information, contact us at **ryanlivaughan@gmail.com** and we will delete it.
+The App is intended for users **13 years of age and older**. We do not knowingly create accounts for, or collect personal information from, children under 13. When you sign up, we ask you to confirm you meet the minimum age. If you believe a child under 13 has provided us information, contact us at **connorxtan@gmail.com** and we will delete it.
 
 If you are between 13 and 18, you should review this policy with a parent or guardian.
 
@@ -80,7 +80,7 @@ We use industry-standard safeguards, including encryption of data in transit (HT
 
 - **Access and correction** — you can view and edit your content directly in the App, and update your email/password in your account settings.
 - **Account and data deletion** — you can delete your account at any time from within the App ("Delete Account" in settings). This permanently deletes your account and associated content from our systems.
-- **Privacy requests** — depending on where you live (for example, under the EU/UK GDPR or the California CCPA/CPRA), you may have additional rights to access, correct, delete, or port your data, and to object to or restrict certain processing. To make a request, email **ryanlivaughan@gmail.com**. We do not "sell" or "share" personal information as those terms are defined under U.S. state privacy laws.
+- **Privacy requests** — depending on where you live (for example, under the EU/UK GDPR or the California CCPA/CPRA), you may have additional rights to access, correct, delete, or port your data, and to object to or restrict certain processing. To make a request, email **connorxtan@gmail.com**. We do not "sell" or "share" personal information as those terms are defined under U.S. state privacy laws.
 
 ## 10. Children's privacy
 
@@ -94,9 +94,8 @@ We may update this Privacy Policy from time to time. When we do, we will revise 
 
 Questions or requests about this policy or your data:
 
-**Ryan Li**
-Email: **ryanlivaughan@gmail.com**
-86 Oberfrick Ave, Vaughan, ON L6A 0N9, Canada
+**Connor Tan**
+Email: **connorxtan@gmail.com**
 
 ---
 

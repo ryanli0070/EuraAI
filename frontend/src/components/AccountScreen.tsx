@@ -261,11 +261,11 @@ function HelpScreen() {
       <section className="acct-section">
         <div className="label">Get in touch</div>
         <div className="acct-card">
-          <a className="acct-row as-button" href="mailto:support@eura.app">
+          <a className="acct-row as-button" href="mailto:eura@euralearn.com">
             <span className="row-icon"><Mail size={18} /></span>
             <span className="row-main">
               <span className="row-label">Email support</span>
-              <span className="row-sub">support@eura.app</span>
+              <span className="row-sub">eura@euralearn.com</span>
             </span>
             <ExternalLink size={16} className="row-chev" />
           </a>
