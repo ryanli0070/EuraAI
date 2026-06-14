@@ -192,7 +192,7 @@ const STYLES = `
    overflowing dropdown isn't covered. Hover applies a transform, which creates
    a stacking context and would otherwise trap the menu's z-index inside the
    card. Kept below the sticky header (z-index:10). */
-.canvas-menu .card.menu-open{z-index:8}
+.canvas-menu .card.menu-open{z-index:8;overflow:visible}
 
 .canvas-menu .thumb{
   height:140px;display:flex;align-items:center;justify-content:center;
@@ -246,8 +246,12 @@ const STYLES = `
 
 .canvas-menu .card-body{
   padding:12px 14px;
-  display:flex;flex-direction:column;gap:4px;
+  display:flex;flex-direction:row;align-items:center;gap:8px;
 }
+.canvas-menu .card-text{
+  flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:4px;
+}
+.canvas-menu .card-actions{position:relative;flex-shrink:0}
 .canvas-menu .card-name{
   font-family:var(--ui);font-size:14px;font-weight:600;color:var(--ink);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -261,19 +265,17 @@ const STYLES = `
 }
 
 .canvas-menu .kebab{
-  position:absolute;top:8px;right:8px;z-index:5;
-  display:none;
-  width:28px;height:28px;border-radius:50%;
-  background:rgba(255,255,255,0.95);border:1px solid var(--rule);
-  align-items:center;justify-content:center;cursor:pointer;
-  color:var(--ink-soft);
+  display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:28px;border-radius:8px;flex-shrink:0;
+  background:transparent;border:none;cursor:pointer;
+  color:var(--pencil);
+  transition:background .15s ease, color .15s ease;
 }
-.canvas-menu .card:hover .kebab,
-.canvas-menu .kebab.open{display:flex}
-.canvas-menu .kebab:hover{color:var(--ink);background:#fff}
+.canvas-menu .kebab:hover,
+.canvas-menu .kebab.open{background:var(--paper-2);color:var(--ink)}
 
 .canvas-menu .menu{
-  position:absolute;top:42px;right:8px;z-index:5;
+  position:absolute;top:calc(100% + 6px);right:0;z-index:20;
   background:#fff;border:1.5px solid var(--ink);border-radius:8px;
   box-shadow:4px 6px 0 rgba(24,36,63,0.1);
   min-width:160px;overflow:hidden;
@@ -746,61 +748,65 @@ function Card({
         {isFolder ? <FolderSheets index={index} folder={item as Folder} /> : <CanvasThumb canvas={item as CanvasMeta} />}
       </div>
       <div className="card-body">
-        <div className="card-name">
-          {isRenaming ? (
-            <RenameInput initial={item.name} onCommit={onCommitRename} onCancel={onCancelRename} />
-          ) : (
-            <span title={item.name}>{item.name}</span>
-          )}
+        <div className="card-text">
+          <div className="card-name">
+            {isRenaming ? (
+              <RenameInput initial={item.name} onCommit={onCommitRename} onCancel={onCancelRename} />
+            ) : (
+              <span title={item.name}>{item.name}</span>
+            )}
+          </div>
+          <div className="card-meta">
+            {showLocation
+              ? locationLabel(index, item)
+              : isFolder
+                ? folderChildLabel(index, item as Folder)
+                : modifiedLabel(item.modifiedAt)}
+          </div>
         </div>
-        <div className="card-meta">
-          {showLocation
-            ? locationLabel(index, item)
-            : isFolder
-              ? folderChildLabel(index, item as Folder)
-              : modifiedLabel(item.modifiedAt)}
+
+        <div className="card-actions">
+          <button
+            className={`kebab ${isMenuOpen ? 'open' : ''}`}
+            onClick={(e) => { e.stopPropagation(); onToggleMenu() }}
+            aria-label="More actions"
+          >
+            <DotsIcon />
+          </button>
+
+          {isMenuOpen && (
+            <div className="menu" onClick={(e) => e.stopPropagation()}>
+              <button onClick={onRequestRename}>Rename</button>
+              {item.kind === 'canvas' && <button onClick={onDuplicate}>Duplicate</button>}
+              {isFolder && (
+                <>
+                  <div className="sep" />
+                  <div className="menu-colors-label">Color</div>
+                  <div className="menu-colors" role="group" aria-label="Folder color">
+                    {FOLDER_COLORS.map((c) => {
+                      const active = ((item as Folder).color ?? 'manila') === c.key
+                      return (
+                        <button
+                          key={c.key}
+                          type="button"
+                          className={`swatch ${active ? 'active' : ''}`}
+                          style={{ background: c.value }}
+                          title={c.label}
+                          aria-label={c.label}
+                          aria-pressed={active}
+                          onClick={() => onSetColor(c.key === 'manila' ? null : c.key)}
+                        />
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+              <div className="sep" />
+              <button className="danger" onClick={onDelete}>Delete</button>
+            </div>
+          )}
         </div>
       </div>
-
-      <button
-        className={`kebab ${isMenuOpen ? 'open' : ''}`}
-        onClick={(e) => { e.stopPropagation(); onToggleMenu() }}
-        aria-label="More actions"
-      >
-        <DotsIcon />
-      </button>
-
-      {isMenuOpen && (
-        <div className="menu" onClick={(e) => e.stopPropagation()}>
-          <button onClick={onRequestRename}>Rename</button>
-          {item.kind === 'canvas' && <button onClick={onDuplicate}>Duplicate</button>}
-          {isFolder && (
-            <>
-              <div className="sep" />
-              <div className="menu-colors-label">Color</div>
-              <div className="menu-colors" role="group" aria-label="Folder color">
-                {FOLDER_COLORS.map((c) => {
-                  const active = ((item as Folder).color ?? 'manila') === c.key
-                  return (
-                    <button
-                      key={c.key}
-                      type="button"
-                      className={`swatch ${active ? 'active' : ''}`}
-                      style={{ background: c.value }}
-                      title={c.label}
-                      aria-label={c.label}
-                      aria-pressed={active}
-                      onClick={() => onSetColor(c.key === 'manila' ? null : c.key)}
-                    />
-                  )
-                })}
-              </div>
-            </>
-          )}
-          <div className="sep" />
-          <button className="danger" onClick={onDelete}>Delete</button>
-        </div>
-      )}
     </div>
   )
 }
