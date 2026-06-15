@@ -24,6 +24,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Eura uses speech recognition so you can dictate questions to Orion instead of typing.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Eura uses the microphone to transcribe your spoken questions to Orion.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

@@ -1,0 +1,116 @@
+diff --git a/node_modules/@capacitor-community/speech-recognition/.swiftpm/xcode/xcuserdata/ryanli.xcuserdatad/xcschemes/xcschememanagement.plist b/node_modules/@capacitor-community/speech-recognition/.swiftpm/xcode/xcuserdata/ryanli.xcuserdatad/xcschemes/xcschememanagement.plist
+new file mode 100644
+index 0000000..529fba1
+--- /dev/null
++++ b/node_modules/@capacitor-community/speech-recognition/.swiftpm/xcode/xcuserdata/ryanli.xcuserdatad/xcschemes/xcschememanagement.plist
+@@ -0,0 +1,14 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++	<key>SchemeUserState</key>
++	<dict>
++		<key>CapacitorCommunitySpeechRecognition.xcscheme_^#shared#^_</key>
++		<dict>
++			<key>orderHint</key>
++			<integer>7</integer>
++		</dict>
++	</dict>
++</dict>
++</plist>
+diff --git a/node_modules/@capacitor-community/speech-recognition/Package.swift b/node_modules/@capacitor-community/speech-recognition/Package.swift
+new file mode 100644
+index 0000000..40a44dd
+--- /dev/null
++++ b/node_modules/@capacitor-community/speech-recognition/Package.swift
+@@ -0,0 +1,25 @@
++// swift-tools-version: 5.9
++import PackageDescription
++
++let package = Package(
++    name: "CapacitorCommunitySpeechRecognition",
++    platforms: [.iOS(.v15)],
++    products: [
++        .library(
++            name: "CapacitorCommunitySpeechRecognition",
++            targets: ["SpeechRecognitionPlugin"])
++    ],
++    dependencies: [
++        .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", from: "8.0.0")
++    ],
++    targets: [
++        .target(
++            name: "SpeechRecognitionPlugin",
++            dependencies: [
++                .product(name: "Capacitor", package: "capacitor-swift-pm"),
++                .product(name: "Cordova", package: "capacitor-swift-pm")
++            ],
++            path: "ios/Plugin",
++            exclude: ["Info.plist"])
++    ]
++)
+diff --git a/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.h b/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.h
+deleted file mode 100644
+index f2bd9e0..0000000
+--- a/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.h
++++ /dev/null
+@@ -1,10 +0,0 @@
+-#import <UIKit/UIKit.h>
+-
+-//! Project version number for Plugin.
+-FOUNDATION_EXPORT double PluginVersionNumber;
+-
+-//! Project version string for Plugin.
+-FOUNDATION_EXPORT const unsigned char PluginVersionString[];
+-
+-// In this header, you should import all the public headers of your framework using statements like #import <Plugin/PublicHeader.h>
+-
+diff --git a/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.m b/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.m
+deleted file mode 100644
+index 30cea40..0000000
+--- a/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.m
++++ /dev/null
+@@ -1,17 +0,0 @@
+-#import <Foundation/Foundation.h>
+-#import <Capacitor/Capacitor.h>
+-
+-// Define the plugin using the CAP_PLUGIN Macro, and
+-// each method the plugin supports using the CAP_PLUGIN_METHOD macro.
+-CAP_PLUGIN(SpeechRecognition, "SpeechRecognition",
+-        CAP_PLUGIN_METHOD(available, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(start, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(stop, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(getSupportedLanguages, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(hasPermission, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(isListening, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(requestPermission, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(checkPermissions, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(requestPermissions, CAPPluginReturnPromise);
+-        CAP_PLUGIN_METHOD(removeAllListeners, CAPPluginReturnPromise);
+-)
+diff --git a/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.swift b/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.swift
+index 5d1b35b..98ad552 100644
+--- a/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.swift
++++ b/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.swift
+@@ -3,7 +3,20 @@ import Capacitor
+ import Speech
+ 
+ @objc(SpeechRecognition)
+-public class SpeechRecognition: CAPPlugin {
++public class SpeechRecognition: CAPPlugin, CAPBridgedPlugin {
++    // SPM/Capacitor 6+ in-Swift registration (replaces the old Plugin.m
++    // CAP_PLUGIN macro) so this plugin builds as a pure-Swift SPM target.
++    public let identifier = "SpeechRecognition"
++    public let jsName = "SpeechRecognition"
++    public let pluginMethods: [CAPPluginMethod] = [
++        CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "getSupportedLanguages", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "isListening", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "checkPermissions", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "requestPermissions", returnType: CAPPluginReturnPromise)
++    ]
+ 
+     let defaultMatches = 5
+     let messageMissingPermission = "Missing permission"

@@ -29,7 +29,7 @@ async def check_work(
         image_bytes = await read_with_limit(file)
         image_hash = hashlib.sha256(image_bytes).hexdigest()
 
-        # One GPT-4o vision call does OCR + step analysis + Socratic hint.
+        # One vision-model call does OCR + step analysis + Socratic hint.
         analysis = check_service.check_image(image_bytes)
         steps_latex = [s.latex for s in analysis.steps]
         latex = "\n".join(steps_latex)

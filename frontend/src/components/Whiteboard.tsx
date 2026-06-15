@@ -500,7 +500,7 @@ function HomeButton({ onHome }: { onHome?: () => void }) {
   return (
     <button
       onClick={onHome}
-      className="wb-home absolute left-0 top-0 z-[1000] flex h-10 items-center gap-1 rounded-br-xl border-b border-r border-neutral-200 bg-white/95 px-3 text-sm font-medium text-neutral-700 shadow-sm backdrop-blur transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+      className="wb-home absolute left-3 top-3 z-[1000] flex h-10 items-center gap-1 rounded-full border border-neutral-200 bg-white/95 px-3.5 text-sm font-medium text-neutral-700 shadow-sm backdrop-blur transition-colors hover:bg-neutral-100 hover:text-neutral-900"
       aria-label="Home"
       style={{ touchAction: 'manipulation' }}
     >

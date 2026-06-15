@@ -17,9 +17,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Send, X } from 'lucide-react'
+import { Mic, Send, X } from 'lucide-react'
 import katex from 'katex'
 import type { ChatMessage } from '../lib/canvasStore'
+import { useDictation } from '../lib/useDictation'
 
 const BOX_W = 468
 
@@ -53,6 +54,23 @@ export function OrionAssistant({
   const hasMessages = messages.length > 0
   const busy = sending || checking
 
+  // Voice dictation (native iOS speech-to-text). While listening, partial
+  // transcripts replace everything typed after the text captured when the mic
+  // was tapped, so speech flows live into the field without clobbering a prefix.
+  const dictation = useDictation()
+  const dictateBaseRef = useRef('')
+  const toggleMic = () => {
+    if (dictation.listening) { void dictation.stop(); return }
+    dictateBaseRef.current = input.trim() ? input.trimEnd() + ' ' : ''
+    void dictation.start((text) => setInput(dictateBaseRef.current + text))
+  }
+
+  // Stop listening if the box closes.
+  const { listening: micOn, stop: micStop } = dictation
+  useEffect(() => {
+    if (!open && micOn) void micStop()
+  }, [open, micOn, micStop])
+
   // Center the box in the top-middle of the screen. The pill only toggles it
   // open/closed — it is NOT the pivot the box grows from (that's top-center).
   const computeAnchor = () => {
@@ -73,10 +91,8 @@ export function OrionAssistant({
     return () => window.removeEventListener('resize', onResize)
   }, [open])
 
-  // Focus the input when the box opens.
-  useEffect(() => {
-    if (open) inputRef.current?.focus()
-  }, [open])
+  // NOTE: intentionally do NOT auto-focus the input on open — that pops the iOS
+  // keyboard up the moment Orion appears. The user taps the field to type.
 
   // Keep the thread pinned to the newest message / typing indicator.
   useEffect(() => {
@@ -184,18 +200,32 @@ export function OrionAssistant({
                 </div>
 
                 <div className="orion-input-row">
-                  <textarea
-                    ref={inputRef}
-                    className="orion-textarea"
-                    rows={1}
-                    placeholder="Ask a follow-up…"
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() }
-                    }}
-                    aria-label="Message Orion"
-                  />
+                  <div className="orion-input-wrap">
+                    <textarea
+                      ref={inputRef}
+                      className={`orion-textarea${dictation.supported ? ' has-mic' : ''}`}
+                      rows={1}
+                      placeholder={dictation.listening ? 'Listening…' : 'Ask a question'}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend() }
+                      }}
+                      aria-label="Message Orion"
+                    />
+                    {dictation.supported && (
+                      <button
+                        type="button"
+                        className="orion-mic"
+                        data-listening={dictation.listening}
+                        aria-label={dictation.listening ? 'Stop dictation' : 'Dictate'}
+                        aria-pressed={dictation.listening}
+                        onClick={toggleMic}
+                      >
+                        <Mic size={15} strokeWidth={2.25} />
+                      </button>
+                    )}
+                  </div>
                   <button
                     type="button"
                     className="orion-send"
@@ -257,7 +287,9 @@ function RichText({ text }: { text: string }) {
         p.kind === 'math' ? (
           <span
             key={i}
-            dangerouslySetInnerHTML={{ __html: katex.renderToString(p.value, { throwOnError: false }) }}
+            dangerouslySetInnerHTML={{
+              __html: katex.renderToString(p.value, { throwOnError: false, displayMode: p.display }),
+            }}
           />
         ) : (
           <span key={i}>{p.value}</span>
@@ -267,15 +299,21 @@ function RichText({ text }: { text: string }) {
   )
 }
 
-type Segment = { kind: 'text' | 'math'; value: string }
+type Segment = { kind: 'text' | 'math'; value: string; display?: boolean }
+// Recognize every LaTeX delimiter the model actually emits — $$…$$ and \[…\]
+// (display) plus $…$ and \(…\) (inline) — not just $…$. Otherwise replies like
+// "that's correct: \(x=2\)" render the raw delimiters as literal text. We strip
+// the delimiters to KaTeX's bare expression and flag display vs. inline.
+// Order matters: $$ is tried before $ so it isn't mis-split as two $…$ spans.
 function splitMath(s: string): Segment[] {
   const out: Segment[] = []
-  const re = /\$([^$]+)\$/g
+  const re = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(s)) !== null) {
     if (m.index > last) out.push({ kind: 'text', value: s.slice(last, m.index) })
-    out.push({ kind: 'math', value: m[1] })
+    const display = m[1] !== undefined || m[2] !== undefined
+    out.push({ kind: 'math', value: m[1] ?? m[2] ?? m[3] ?? m[4] ?? '', display })
     last = re.lastIndex
   }
   if (last < s.length) out.push({ kind: 'text', value: s.slice(last) })
@@ -283,7 +321,14 @@ function splitMath(s: string): Segment[] {
 }
 
 const STYLES = `
-.orion{
+/* Design tokens. Declared on BOTH the toolbar wrapper (.orion) and the popup
+ * (.orion-box / .orion-backdrop) because the popup is portaled to <body>, i.e.
+ * it is NOT a DOM descendant of .orion — so without this, var(--orion-*) inside
+ * the popup resolves to nothing and e.g. the user bubble's accent background
+ * disappears (white text on white = invisible message). */
+.orion,
+.orion-box,
+.orion-backdrop{
   /* ---- Light frosted-glass tokens ---- */
   --orion-glass: rgba(252,250,246,0.82);   /* translucent cream — matches the app */
   --orion-blur: 20px;
@@ -294,8 +339,8 @@ const STYLES = `
   /* soft, desaturated glow accent (subtle — kept off the text) */
   --orion-glow-a: #c9b8ec; --orion-glow-b: #a7c3ea; --orion-glow-c: #edc4d6;
   --ui:'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-  display:inline-flex;
 }
+.orion{ display:inline-flex; }
 
 .orion-glass{
   position:relative;
@@ -386,6 +431,9 @@ const STYLES = `
 .orion-msg.ok{ background:#e7f6ee; color:#0f5132; border:1px solid #b7e3c9; border-bottom-left-radius:5px; }
 .orion-msg.error{ background:#fdeaea; color:#842029; border:1px solid #f1c2c2; border-bottom-left-radius:5px; }
 .orion-msg.warn{ background:#fbf2dc; color:#7a5b13; border:1px solid #ecd9a6; border-bottom-left-radius:5px; }
+/* KaTeX inside chat bubbles: trim display-mode's large default margins and let
+   long expressions scroll horizontally instead of overflowing the bubble. */
+.orion-msg .katex-display{ margin:.35em 0; overflow-x:auto; overflow-y:hidden; padding-bottom:2px; }
 
 .orion-typing{ display:inline-flex; gap:4px; align-items:center; padding:2px 0; }
 .orion-typing i{ width:6px; height:6px; border-radius:50%; background:rgba(24,36,63,.4); animation:orionBlink 1.2s infinite ease-in-out; }
@@ -397,11 +445,20 @@ const STYLES = `
   display:flex; align-items:flex-end; gap:8px;
   padding:10px; border-top:1px solid var(--orion-line);
 }
+/* Invisible left spacer the same width as the send button, so the text box is
+   centered in the popup with equal gaps on both sides (send still sits right). */
+.orion-input-row::before{ content:''; flex:0 0 36px; }
+/* Wrap holds the textarea + the mic button overlaid inside its right edge. */
+.orion-input-wrap{ position:relative; flex:1; display:flex; }
 .orion-textarea{
   flex:1; resize:none; max-height:120px;
-  background:rgba(255,255,255,0.75); border:1px solid var(--orion-line); border-radius:11px;
+  /* Outline chatbox: transparent fill, just a clean border. */
+  background:transparent; border:1px solid rgba(24,36,63,0.22); border-radius:11px;
   padding:8px 11px; color:var(--orion-ink); font:450 14px/1.35 var(--ui); outline:none;
+  text-align:center;
 }
+/* Reserve symmetric room for the mic so centered text stays visually centered. */
+.orion-textarea.has-mic{ padding-left:38px; padding-right:38px }
 .orion-textarea::placeholder{ color:var(--orion-ink-soft); opacity:.7 }
 .orion-textarea:focus{ border-color:rgba(45,90,217,.55); box-shadow:0 0 0 3px rgba(45,90,217,.14) }
 .orion-send{
@@ -412,6 +469,27 @@ const STYLES = `
 }
 .orion-send:hover:not(:disabled){ background:#244bbd } .orion-send:active{ transform:scale(.94) }
 .orion-send:disabled{ opacity:.4; cursor:default }
+
+/* Mic / dictation toggle — sits INSIDE the textbox on its right edge. Subtle at
+   rest, red + pulsing while listening. */
+.orion-mic{
+  position:absolute; right:5px; bottom:5px;
+  display:inline-flex; align-items:center; justify-content:center;
+  width:28px; height:28px; border-radius:8px;
+  background:transparent; border:none; color:var(--orion-ink-soft);
+  cursor:pointer; transition: background .15s ease, color .15s ease, transform .12s ease;
+}
+.orion-mic:hover{ background:rgba(24,36,63,0.06); color:var(--orion-ink) }
+.orion-mic:active{ transform:scale(.9) }
+.orion-mic[data-listening="true"]{
+  background:#e5484d; color:#fff;
+  animation:orionMicPulse 1.4s infinite ease-in-out;
+}
+@keyframes orionMicPulse{
+  0%,100%{ box-shadow:0 0 0 0 rgba(229,72,77,.45) }
+  50%{ box-shadow:0 0 0 6px rgba(229,72,77,0) }
+}
+@media (prefers-reduced-motion: reduce){ .orion-mic[data-listening="true"]{ animation:none } }
 
 @media (prefers-reduced-motion: reduce){
   .orion-glow{ filter:blur(20px); }

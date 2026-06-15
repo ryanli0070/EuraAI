@@ -30,14 +30,14 @@ def _build_help_messages(image_b64: str) -> list[dict]:
 
 
 def help_image(image_bytes: bytes) -> HelpOutput:
-    """Explicit help path: GPT-4o identifies the wrong step and explains the error directly."""
+    """Explicit help path: the model identifies the wrong step and explains the error directly."""
     png = preprocess(image_bytes)
     b64 = base64.b64encode(png).decode("ascii")
     completion = get_client().beta.chat.completions.parse(
         model=config.OPENAI_MODEL,
         messages=_build_help_messages(b64),
         response_format=HelpOutput,
-        temperature=0.2,
+        **config.model_call_kwargs(0.2),
     )
     parsed = completion.choices[0].message.parsed
     assert parsed is not None, "OpenAI returned no parsed payload"

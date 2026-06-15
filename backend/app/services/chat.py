@@ -38,8 +38,11 @@ def ask_followup(latex: str, history: list[dict], question: str) -> str:
         completion = client.chat.completions.create(
             model=config.OPENAI_MODEL,
             messages=msgs,
-            temperature=0.3,
-            max_tokens=220,
+            # Reasoning models spend tokens on hidden reasoning that counts against
+            # this budget, so the cap must leave room beyond the ~220-token reply
+            # itself or the visible content comes back empty.
+            max_completion_tokens=1200,
+            **config.model_call_kwargs(0.3),
         )
         return (completion.choices[0].message.content or "").strip()
 

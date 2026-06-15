@@ -55,6 +55,17 @@ const PULL_DAMP = 0.55 // rubber-band resistance while overscrolling
 const PULL_MAX_OVERSCROLL = 120 // cap on how far the page visually lags the cursor
 const SNAP_MS = 240 // snap / page-change animation duration
 
+// Scratch-to-erase (Goodnotes-style): a back-and-forth scribble drawn over
+// existing ink deletes the strokes it covers instead of being kept as a mark.
+// All thresholds are in page units. Detection is deliberately conservative —
+// and gated on actually overlapping ink — so ordinary writing is never eaten.
+const SCRIBBLE_MIN_POINTS = 12 // need enough samples to judge the shape
+const SCRIBBLE_MIN_DIAG = 20 // bbox diagonal floor; ignore dots/short flicks
+const SCRIBBLE_MIN_REVERSALS = 4 // direction changes along the major axis
+const SCRIBBLE_MIN_WIGGLE = 2 // path length ÷ bbox diagonal (folds back on itself)
+const SCRIBBLE_SWING = 12 // a turn must span this far along the axis to count
+const SCRIBBLE_COVER = 0.55 // fraction of a stroke the scribble must cover to delete it
+
 const DESK_BG = '#e9e7e0'
 const PAGE_BG = '#ffffff'
 const PAGE_SHADOW = 'rgba(24,36,63,0.20)'
@@ -103,6 +114,61 @@ function restPan(current: number, pagePx: number, viewport: number): number {
   if (pagePx <= viewport) return 0
   const range = (pagePx - viewport) / 2
   return clamp(current, -range, range)
+}
+
+/**
+ * Count significant direction reversals (turning points) in a 1-D sequence —
+ * the spine of a scribble projected onto its major axis. A reversal is only
+ * counted once the value retreats from the last extreme by `minSwing`, so pen
+ * jitter doesn't inflate the count. A back-and-forth scribble yields several;
+ * a letter or digit yields one or two.
+ */
+function countReversals(vals: number[], minSwing: number): number {
+  let reversals = 0
+  let dir = 0 // current travel direction: +1, -1, or 0 (undetermined)
+  let ext = vals[0] // last turning point / running extreme
+  for (let i = 1; i < vals.length; i++) {
+    const v = vals[i]
+    if (dir === 0) {
+      if (v - ext >= minSwing) { dir = 1; ext = v }
+      else if (ext - v >= minSwing) { dir = -1; ext = v }
+    } else if (dir === 1) {
+      if (v > ext) ext = v // still rising — push the extreme out
+      else if (ext - v >= minSwing) { reversals++; dir = -1; ext = v } // turned back
+    } else {
+      if (v < ext) ext = v
+      else if (v - ext >= minSwing) { reversals++; dir = 1; ext = v }
+    }
+  }
+  return reversals
+}
+
+/**
+ * Heuristic: does this freehand path look like a scratch-out scribble (vs. real
+ * writing)? True when it has enough samples, isn't tiny, folds back on itself
+ * (path length ≫ bbox diagonal), and reverses direction several times along its
+ * longer axis. Whether it actually erases anything is decided separately by
+ * overlap with existing ink.
+ */
+function isScribble(points: { x: number; y: number }[]): boolean {
+  const n = points.length
+  if (n < SCRIBBLE_MIN_POINTS) return false
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, len = 0
+  for (let i = 0; i < n; i++) {
+    const p = points[i]
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.y > maxY) maxY = p.y
+    if (i > 0) len += Math.hypot(p.x - points[i - 1].x, p.y - points[i - 1].y)
+  }
+  const w = maxX - minX
+  const h = maxY - minY
+  const diag = Math.hypot(w, h)
+  if (diag < SCRIBBLE_MIN_DIAG) return false
+  if (len / diag < SCRIBBLE_MIN_WIGGLE) return false
+  const axis = points.map((p) => (w >= h ? p.x : p.y))
+  return countReversals(axis, SCRIBBLE_SWING) >= SCRIBBLE_MIN_REVERSALS
 }
 
 type Listener = () => void
@@ -986,12 +1052,17 @@ export class WhiteboardEngine {
     }
 
     if (this.drawing) {
-      if (this.drawing.points.length > 0) {
-        this.doc.strokes.push(this.drawing)
-        this.drawing = null
-        this.commit()
-      } else {
-        this.drawing = null
+      const stroke = this.drawing
+      this.drawing = null
+      if (stroke.points.length > 0) {
+        // Goodnotes-style scratch-out: a scribble over existing ink erases it
+        // instead of being kept as a mark. Falls through to a normal stroke
+        // when it isn't a scribble or covers nothing.
+        if (this.tryScribbleErase(stroke)) this.commit()
+        else {
+          this.doc.strokes.push(stroke)
+          this.commit()
+        }
       }
       return
     }
@@ -1042,6 +1113,40 @@ export class WhiteboardEngine {
       this.erasedAny = true
       this.requestRender()
     }
+  }
+
+  /**
+   * Scratch-to-erase: if `stroke` (a just-finished draw stroke, not yet added to
+   * the doc) is a scribble that substantially covers existing strokes, delete
+   * those strokes and report true so the caller drops the scribble instead of
+   * keeping it. Returns false for ordinary writing or a scribble over blank
+   * space, leaving the doc untouched. The mutation is committed (undoable) by
+   * the caller.
+   */
+  private tryScribbleErase(stroke: Stroke): boolean {
+    if (!isScribble(stroke.points)) return false
+    const sb = strokeBounds(stroke)
+    const victims = new Set<string>()
+    for (const s of this.doc.strokes) {
+      if (s.points.length === 0) continue
+      if (!boundsIntersect(sb, strokeBounds(s))) continue
+      // How much of THIS stroke does the scribble's spine pass over? Delete it
+      // only when most of it is covered, so a scribble grazing a long stroke
+      // doesn't wipe the whole thing.
+      const radius = s.size / 2 + 6
+      let covered = 0
+      for (const p of s.points) {
+        if (strokeHit(stroke, p.x, p.y, radius)) covered++
+      }
+      if (covered / s.points.length >= SCRIBBLE_COVER) victims.add(s.id)
+    }
+    if (victims.size === 0) return false
+    this.doc.strokes = this.doc.strokes.filter((s) => !victims.has(s.id))
+    for (const id of victims) {
+      this.pathCache.delete(id)
+      this.selection.delete(id)
+    }
+    return true
   }
 
   // ---------------------------------------------------------------------

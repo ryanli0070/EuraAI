@@ -65,6 +65,6 @@ html.native .canvas-menu .container {
  * scoped to html.native, and env() is 0 there anyway.)
  */
 html.native .wb-home {
-  top: calc(env(safe-area-inset-top) + 6px);
-  left: env(safe-area-inset-left);
+  top: calc(env(safe-area-inset-top) + 8px);
+  left: calc(env(safe-area-inset-left) + 12px);
 }

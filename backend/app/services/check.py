@@ -1,4 +1,4 @@
-"""Check flow: student image -> Socratic hint via GPT-4o vision + leak guardrail."""
+"""Check flow: student image -> Socratic hint via the vision model + leak guardrail."""
 from __future__ import annotations
 
 import base64
@@ -49,7 +49,7 @@ def _call_text_tutor(latex: str, stricter: bool) -> TutorOutput:
         model=config.OPENAI_MODEL,
         messages=_build_text_messages(latex, stricter=stricter),
         response_format=TutorOutput,
-        temperature=0.2,
+        **config.model_call_kwargs(0.2),
     )
     parsed = completion.choices[0].message.parsed
     assert parsed is not None, "OpenAI returned no parsed payload"
@@ -57,14 +57,14 @@ def _call_text_tutor(latex: str, stricter: bool) -> TutorOutput:
 
 
 def check_image(image_bytes: bytes) -> TutorOutput:
-    """Single-call path: take the whiteboard PNG, GPT-4o transcribes + analyzes + hints."""
+    """Single-call path: take the whiteboard PNG, the model transcribes + analyzes + hints."""
     png = preprocess(image_bytes)
     b64 = base64.b64encode(png).decode("ascii")
     completion = get_client().beta.chat.completions.parse(
         model=config.OPENAI_MODEL,
         messages=_build_vision_messages(b64),
         response_format=TutorOutput,
-        temperature=0.2,
+        **config.model_call_kwargs(0.2),
     )
     parsed = completion.choices[0].message.parsed
     assert parsed is not None, "OpenAI returned no parsed payload"
@@ -113,7 +113,7 @@ def rewrite_hint_for_index(latex: str, error_index: int, step_latex: str) -> str
         model=config.OPENAI_MODEL,
         messages=messages,
         response_format=TutorOutput,
-        temperature=0.2,
+        **config.model_call_kwargs(0.2),
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None or hint_leaks_answer(parsed.hint):
