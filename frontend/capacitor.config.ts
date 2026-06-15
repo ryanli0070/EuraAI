@@ -10,7 +10,7 @@ const devServerUrl = process.env.CAP_SERVER_URL;
 
 const config: CapacitorConfig = {
   appId: 'com.euralearn.eura',
-  appName: 'EuraAI',
+  appName: 'Eura Learn',
   webDir: 'dist',
   ...(devServerUrl
     ? {
