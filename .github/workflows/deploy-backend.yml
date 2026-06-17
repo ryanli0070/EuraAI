@@ -48,7 +48,9 @@ jobs:
           OPENAI_API_KEY: test-key
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_JWT_SECRET: test-secret
-        run: pytest -q
+        # `python -m pytest` (not bare `pytest`) puts the backend/ cwd on
+        # sys.path so `import app` resolves, matching the local invocation.
+        run: python -m pytest -q
 
   deploy:
     needs: test
