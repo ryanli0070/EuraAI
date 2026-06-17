@@ -1,0 +1,118 @@
+name: Deploy backend to App Runner
+
+# Auto-deploy the FastAPI backend on every push to main that touches backend/.
+# Mirrors the manual pipeline in the backend-prod-deploy notes, but builds the
+# amd64 image natively on GitHub's runner (no Colima cross-build needed).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch: {}  # allow manual "Run workflow" from the Actions tab
+
+concurrency:
+  # Never let two deploys race; a newer push supersedes an in-flight one.
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: 691981917444.dkr.ecr.us-east-1.amazonaws.com/euraai-api
+  SERVICE_ARN: arn:aws:apprunner:us-east-1:691981917444:service/euraai-api/ba2e768cacd44d7a800ceab59a4f5c70
+  HEALTH_URL: https://t8tutmtkjt.us-east-1.awsapprunner.com/api/health
+
+permissions:
+  id-token: write   # required for AWS OIDC
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"  # match the Dockerfile base image
+      - name: Install deps + pytest
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Run tests
+        # config.py requires these at import time; the LLM is mocked in tests,
+        # so dummy values are fine (.env is gitignored and never reaches CI).
+        env:
+          OPENAI_API_KEY: test-key
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_JWT_SECRET: test-secret
+        run: pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::691981917444:role/github-actions-euraai-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          platforms: linux/amd64
+          # App Runner can't pull the attestation manifest list buildx adds by
+          # default — disable provenance/sbom so we push a plain single image.
+          provenance: false
+          sbom: false
+          tags: |
+            ${{ env.ECR_REPO }}:${{ github.sha }}
+            ${{ env.ECR_REPO }}:latest
+
+      - name: Trigger App Runner deployment and wait
+        run: |
+          set -euo pipefail
+          OP_ID=$(aws apprunner start-deployment \
+            --region "$AWS_REGION" --service-arn "$SERVICE_ARN" \
+            --query OperationId --output text)
+          echo "Started deployment operation: $OP_ID"
+
+          for i in $(seq 1 40); do   # ~10 min ceiling (40 * 15s)
+            STATUS=$(aws apprunner describe-service \
+              --region "$AWS_REGION" --service-arn "$SERVICE_ARN" \
+              --query 'Service.Status' --output text)
+            echo "[$i] service status: $STATUS"
+            [ "$STATUS" != "OPERATION_IN_PROGRESS" ] && break
+            sleep 15
+          done
+
+          OP_STATUS=$(aws apprunner list-operations \
+            --region "$AWS_REGION" --service-arn "$SERVICE_ARN" \
+            --query "OperationSummaryList[?Id=='$OP_ID'].Status | [0]" \
+            --output text)
+          echo "operation $OP_ID status: $OP_STATUS / service: $STATUS"
+          if [ "$STATUS" != "RUNNING" ] || [ "$OP_STATUS" != "SUCCEEDED" ]; then
+            echo "::error::App Runner deployment did not succeed"
+            exit 1
+          fi
+
+      - name: Smoke test /api/health
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            if curl -fsS "$HEALTH_URL"; then echo "  <- healthy"; exit 0; fi
+            echo "[$i] health not ready yet; retrying..."; sleep 6
+          done
+          echo "::error::Health check failed after deploy"
+          exit 1
