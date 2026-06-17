@@ -15,13 +15,25 @@ from app.llm.prompts import FEW_SHOTS, STRICTER_RETRY_INSTRUCTION, SYSTEM_PROMPT
 logger = logging.getLogger(__name__)
 
 
-def _build_text_messages(latex: str, stricter: bool) -> list[dict]:
+# A stable key for every text/vision Check call. They all share the same
+# SYSTEM_PROMPT + FEW_SHOTS prefix, so one key routes them to the same backend
+# and lets them reuse the same cached prefix (OpenAI prompt caching).
+_CHECK_CACHE_KEY = "tutor-check"
+
+
+def _build_text_messages(latex: str, extra_system: str | None = None) -> list[dict]:
+    """SYSTEM_PROMPT + few-shots + the student's LaTeX as the final turn.
+
+    The SYSTEM_PROMPT + few-shots prefix is byte-identical across every Check
+    call, which is exactly what OpenAI's prompt cache keys on. Any per-call
+    instruction (stricter-retry, SymPy override) goes in `extra_system` as a
+    *trailing* system message so it never perturbs that cacheable prefix."""
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
     for user, assistant in FEW_SHOTS:
         messages.append({"role": "user", "content": user})
         messages.append({"role": "assistant", "content": json.dumps(assistant)})
-    if stricter:
-        messages.append({"role": "system", "content": STRICTER_RETRY_INSTRUCTION})
+    if extra_system:
+        messages.append({"role": "system", "content": extra_system})
     messages.append({"role": "user", "content": latex})
     return messages
 
@@ -45,11 +57,12 @@ def _build_vision_messages(image_b64: str) -> list[dict]:
 
 
 def _call_text_tutor(latex: str, stricter: bool) -> TutorOutput:
+    extra = STRICTER_RETRY_INSTRUCTION if stricter else None
     completion = get_client().beta.chat.completions.parse(
         model=config.OPENAI_MODEL,
-        messages=_build_text_messages(latex, stricter=stricter),
+        messages=_build_text_messages(latex, extra_system=extra),
         response_format=TutorOutput,
-        **config.model_call_kwargs(0.2),
+        **config.model_call_kwargs(0.2, cache_key=_CHECK_CACHE_KEY),
     )
     parsed = completion.choices[0].message.parsed
     assert parsed is not None, "OpenAI returned no parsed payload"
@@ -64,7 +77,7 @@ def check_image(image_bytes: bytes) -> TutorOutput:
         model=config.OPENAI_MODEL,
         messages=_build_vision_messages(b64),
         response_format=TutorOutput,
-        **config.model_call_kwargs(0.2),
+        **config.model_call_kwargs(0.2, cache_key=_CHECK_CACHE_KEY),
     )
     parsed = completion.choices[0].message.parsed
     assert parsed is not None, "OpenAI returned no parsed payload"
@@ -98,22 +111,19 @@ def rewrite_hint_for_index(latex: str, error_index: int, step_latex: str) -> str
     """SymPy verification override: SymPy says step `error_index` is the first
     wrong one. Generate a hint targeting that exact step regardless of what the
     LLM picked first."""
-    sys_msg = (
-        SYSTEM_PROMPT
-        + f"\n\nIMPORTANT: Symbolic verification has determined that the first incorrect step is "
+    # Keep SYSTEM_PROMPT untouched as message[0] so this call reuses the same
+    # cached prefix as every other Check call; the SymPy override rides along as
+    # a trailing system message instead of being spliced into the system prompt.
+    override = (
+        f"IMPORTANT: Symbolic verification has determined that the first incorrect step is "
         f"0-based index {error_index}, which is: `{step_latex}`. Your hint MUST quote that exact "
         f"step in $...$ delimiters and target it. Do not contradict this."
     )
-    messages: list[dict] = [{"role": "system", "content": sys_msg}]
-    for user, assistant in FEW_SHOTS:
-        messages.append({"role": "user", "content": user})
-        messages.append({"role": "assistant", "content": json.dumps(assistant)})
-    messages.append({"role": "user", "content": latex})
     completion = get_client().beta.chat.completions.parse(
         model=config.OPENAI_MODEL,
-        messages=messages,
+        messages=_build_text_messages(latex, extra_system=override),
         response_format=TutorOutput,
-        **config.model_call_kwargs(0.2),
+        **config.model_call_kwargs(0.2, cache_key=_CHECK_CACHE_KEY),
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None or hint_leaks_answer(parsed.hint):

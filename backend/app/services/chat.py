@@ -42,7 +42,10 @@ def ask_followup(latex: str, history: list[dict], question: str) -> str:
             # this budget, so the cap must leave room beyond the ~220-token reply
             # itself or the visible content comes back empty.
             max_completion_tokens=1200,
-            **config.model_call_kwargs(0.3),
+            # FOLLOWUP_SYSTEM_PROMPT (~750 tokens) is the only static prefix
+            # here; the context block + history vary per turn. The key still
+            # helps route repeat turns of a session to the same backend.
+            **config.model_call_kwargs(0.3, cache_key="tutor-followup"),
         )
         return (completion.choices[0].message.content or "").strip()
 

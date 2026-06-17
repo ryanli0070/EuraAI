@@ -41,17 +41,28 @@ def _is_reasoning_model() -> bool:
     return OPENAI_MODEL.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
-def model_call_kwargs(temperature: float) -> dict:
+def model_call_kwargs(temperature: float, cache_key: str | None = None) -> dict:
     """Per-model request kwargs for chat/parse calls.
 
     Reasoning models (GPT-5+ / o-series) reject a custom `temperature` — only the
     default (1) is allowed — and instead take `reasoning_effort`. Non-reasoning
     models (e.g. gpt-4o) take `temperature` and have no reasoning knob. Routing
     the per-call temperature through here keeps every call site working whether
-    OPENAI_MODEL is a reasoning model or rolled back to gpt-4o."""
+    OPENAI_MODEL is a reasoning model or rolled back to gpt-4o.
+
+    `cache_key` -> OpenAI's `prompt_cache_key`. OpenAI caches identical prompt
+    prefixes (>=1024 tokens) automatically and bills the cached portion at a deep
+    discount with lower latency; our system prompt + few-shots prefix is the same
+    on every call, so it already qualifies. Passing a stable per-flow key only
+    *routes* same-prefix requests to the same backend, raising the hit rate — it
+    never changes the response. Use one key per distinct static prefix."""
     if _is_reasoning_model():
-        return {"reasoning_effort": OPENAI_REASONING_EFFORT}
-    return {"temperature": temperature}
+        kwargs: dict = {"reasoning_effort": OPENAI_REASONING_EFFORT}
+    else:
+        kwargs = {"temperature": temperature}
+    if cache_key:
+        kwargs["prompt_cache_key"] = cache_key
+    return kwargs
 
 # Supabase — used to validate access tokens on protected routes.
 # SUPABASE_URL derives the JWKS endpoint for asymmetric (ES256/RS256) tokens,
