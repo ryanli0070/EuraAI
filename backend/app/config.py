@@ -28,20 +28,44 @@ def _int_env(name: str, default: int) -> int:
         raise RuntimeError(f"Env var {name}={raw!r} must be an integer") from exc
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"Env var {name}={raw!r} must be a float") from exc
+
+
 # OpenAI
 OPENAI_API_KEY: Final[str] = _require("OPENAI_API_KEY")
 OPENAI_MODEL: Final[str] = os.getenv("OPENAI_MODEL", "gpt-5.5")
 # Reasoning effort for GPT-5+ models: none | low | medium | high | xhigh.
-# "low" balances quality against latency for an interactive tutoring loop; bump
-# to "medium"/"high" for harder Check Work OCR + analysis at the cost of speed.
+# Per-flow, because the flows differ in difficulty: the image flows (Check/Help)
+# do OCR + multi-step analysis and default to "medium"; the text-only followup
+# chat is lighter and stays "low" for snappier replies. ANALYSIS is bumped to
+# ESCALATED on the reactive-escalation retry (see routes/check.py). OPENAI_REASONING_EFFORT
+# remains the global fallback so a single env var can still override everything.
 OPENAI_REASONING_EFFORT: Final[str] = os.getenv("OPENAI_REASONING_EFFORT", "low")
+REASONING_EFFORT_ANALYSIS: Final[str] = os.getenv("OPENAI_REASONING_EFFORT_ANALYSIS", "medium")
+REASONING_EFFORT_FOLLOWUP: Final[str] = os.getenv("OPENAI_REASONING_EFFORT_FOLLOWUP", OPENAI_REASONING_EFFORT)
+REASONING_EFFORT_ESCALATED: Final[str] = os.getenv("OPENAI_REASONING_EFFORT_ESCALATED", "high")
+# Below this model-reported confidence, re-run Check once at ESCALATED effort
+# before trusting the verdict. The few-shots sit at 0.93-0.99, so 0.75 catches
+# genuinely-unsure reads without escalating the routine confident ones.
+ESCALATION_CONFIDENCE_THRESHOLD: Final[float] = _float_env("ESCALATION_CONFIDENCE_THRESHOLD", 0.75)
 
 
 def _is_reasoning_model() -> bool:
     return OPENAI_MODEL.startswith(("gpt-5", "o1", "o3", "o4"))
 
 
-def model_call_kwargs(temperature: float, cache_key: str | None = None) -> dict:
+def model_call_kwargs(
+    temperature: float,
+    cache_key: str | None = None,
+    reasoning_effort: str | None = None,
+) -> dict:
     """Per-model request kwargs for chat/parse calls.
 
     Reasoning models (GPT-5+ / o-series) reject a custom `temperature` — only the
@@ -50,6 +74,10 @@ def model_call_kwargs(temperature: float, cache_key: str | None = None) -> dict:
     the per-call temperature through here keeps every call site working whether
     OPENAI_MODEL is a reasoning model or rolled back to gpt-4o.
 
+    `reasoning_effort` overrides the per-flow effort for this one call (e.g. the
+    escalation retry); it's ignored on non-reasoning models. Falls back to the
+    global OPENAI_REASONING_EFFORT when a caller passes nothing.
+
     `cache_key` -> OpenAI's `prompt_cache_key`. OpenAI caches identical prompt
     prefixes (>=1024 tokens) automatically and bills the cached portion at a deep
     discount with lower latency; our system prompt + few-shots prefix is the same
@@ -57,7 +85,7 @@ def model_call_kwargs(temperature: float, cache_key: str | None = None) -> dict:
     *routes* same-prefix requests to the same backend, raising the hit rate — it
     never changes the response. Use one key per distinct static prefix."""
     if _is_reasoning_model():
-        kwargs: dict = {"reasoning_effort": OPENAI_REASONING_EFFORT}
+        kwargs: dict = {"reasoning_effort": reasoning_effort or OPENAI_REASONING_EFFORT}
     else:
         kwargs = {"temperature": temperature}
     if cache_key:

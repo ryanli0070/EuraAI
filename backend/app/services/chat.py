@@ -44,8 +44,12 @@ def ask_followup(latex: str, history: list[dict], question: str) -> str:
             max_completion_tokens=1200,
             # FOLLOWUP_SYSTEM_PROMPT (~750 tokens) is the only static prefix
             # here; the context block + history vary per turn. The key still
-            # helps route repeat turns of a session to the same backend.
-            **config.model_call_kwargs(0.3, cache_key="tutor-followup"),
+            # helps route repeat turns of a session to the same backend. This is
+            # a text-only chat turn (no OCR), so it stays at the lighter FOLLOWUP
+            # effort for snappier replies.
+            **config.model_call_kwargs(
+                0.3, cache_key="tutor-followup", reasoning_effort=config.REASONING_EFFORT_FOLLOWUP
+            ),
         )
         return (completion.choices[0].message.content or "").strip()
 

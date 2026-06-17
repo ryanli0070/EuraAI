@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 
+from app import config
 from app.auth import get_current_user
 from app.errors import FileTooLargeError
 from app.limiter import limiter
@@ -31,6 +32,20 @@ async def check_work(
 
         # One vision-model call does OCR + step analysis + Socratic hint.
         analysis = check_service.check_image(image_bytes)
+
+        # Reactive escalation: the cheap pass came back unsure about its own
+        # read/verdict. Re-run once at higher reasoning effort before any of the
+        # SymPy/guardrail logic trusts it. Skipped on a blank canvas (no steps),
+        # and we only adopt the retry if it actually produced steps.
+        if analysis.steps and analysis.confidence < config.ESCALATION_CONFIDENCE_THRESHOLD:
+            logger.info(
+                "low confidence %.2f < %.2f; escalating reasoning effort",
+                analysis.confidence, config.ESCALATION_CONFIDENCE_THRESHOLD,
+            )
+            escalated = check_service.check_image(image_bytes, escalate=True)
+            if escalated.steps:
+                analysis = escalated
+
         steps_latex = [s.latex for s in analysis.steps]
         latex = "\n".join(steps_latex)
 

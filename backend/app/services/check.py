@@ -62,22 +62,28 @@ def _call_text_tutor(latex: str, stricter: bool) -> TutorOutput:
         model=config.OPENAI_MODEL,
         messages=_build_text_messages(latex, extra_system=extra),
         response_format=TutorOutput,
-        **config.model_call_kwargs(0.2, cache_key=_CHECK_CACHE_KEY),
+        **config.model_call_kwargs(
+            0.2, cache_key=_CHECK_CACHE_KEY, reasoning_effort=config.REASONING_EFFORT_ANALYSIS
+        ),
     )
     parsed = completion.choices[0].message.parsed
     assert parsed is not None, "OpenAI returned no parsed payload"
     return parsed
 
 
-def check_image(image_bytes: bytes) -> TutorOutput:
-    """Single-call path: take the whiteboard PNG, the model transcribes + analyzes + hints."""
+def check_image(image_bytes: bytes, escalate: bool = False) -> TutorOutput:
+    """Single-call path: take the whiteboard PNG, the model transcribes + analyzes + hints.
+
+    `escalate=True` re-runs the same call at the higher ESCALATED reasoning effort
+    — used by the reactive retry when the first pass comes back low-confidence."""
     png = preprocess(image_bytes)
     b64 = base64.b64encode(png).decode("ascii")
+    effort = config.REASONING_EFFORT_ESCALATED if escalate else config.REASONING_EFFORT_ANALYSIS
     completion = get_client().beta.chat.completions.parse(
         model=config.OPENAI_MODEL,
         messages=_build_vision_messages(b64),
         response_format=TutorOutput,
-        **config.model_call_kwargs(0.2, cache_key=_CHECK_CACHE_KEY),
+        **config.model_call_kwargs(0.2, cache_key=_CHECK_CACHE_KEY, reasoning_effort=effort),
     )
     parsed = completion.choices[0].message.parsed
     assert parsed is not None, "OpenAI returned no parsed payload"
@@ -123,7 +129,9 @@ def rewrite_hint_for_index(latex: str, error_index: int, step_latex: str) -> str
         model=config.OPENAI_MODEL,
         messages=_build_text_messages(latex, extra_system=override),
         response_format=TutorOutput,
-        **config.model_call_kwargs(0.2, cache_key=_CHECK_CACHE_KEY),
+        **config.model_call_kwargs(
+            0.2, cache_key=_CHECK_CACHE_KEY, reasoning_effort=config.REASONING_EFFORT_ANALYSIS
+        ),
     )
     parsed = completion.choices[0].message.parsed
     if parsed is None or hint_leaks_answer(parsed.hint):

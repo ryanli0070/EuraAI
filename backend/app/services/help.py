@@ -38,8 +38,11 @@ def help_image(image_bytes: bytes) -> HelpOutput:
         messages=_build_help_messages(b64),
         response_format=HelpOutput,
         # Help has its own static prefix (HELP_SYSTEM_PROMPT + HELP_FEW_SHOTS,
-        # ~2k tokens), distinct from Check's — give it its own cache key.
-        **config.model_call_kwargs(0.2, cache_key="tutor-help"),
+        # ~2k tokens), distinct from Check's — give it its own cache key. Same
+        # image OCR + analysis difficulty as Check, so same reasoning effort.
+        **config.model_call_kwargs(
+            0.2, cache_key="tutor-help", reasoning_effort=config.REASONING_EFFORT_ANALYSIS
+        ),
     )
     parsed = completion.choices[0].message.parsed
     assert parsed is not None, "OpenAI returned no parsed payload"
