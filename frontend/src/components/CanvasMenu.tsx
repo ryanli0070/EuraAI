@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import {
   type CanvasIndex,
   type CanvasMeta,
@@ -22,7 +22,17 @@ import {
   subscribe,
 } from '../lib/canvasStore'
 import { deleteAccount, signOut } from '../lib/auth'
+import { hapticTap } from '../lib/native'
+import { importFile, type ImportProgress } from '../lib/import'
 import { AccountScreen, type AccountScreenId } from './AccountScreen'
+
+// Drag tuning. Touch needs a deliberate long-press to pick a card up (so an
+// ordinary swipe scrolls the grid instead of dragging); mouse/pen pick up as
+// soon as the pointer travels a few px.
+const LONG_PRESS_MS = 240
+const TOUCH_MOVE_CANCEL = 12 // touch: travel past this before the press fires = a scroll, abandon drag
+const MOUSE_DRAG_START = 6 // mouse/pen: travel past this begins a drag
+const REMOVE_ANIM_MS = 180 // fade-out before a deleted card leaves the grid
 
 // Folder color palette. Muted, paper-like tones that read against the dark ink
 // border. The stored value is the `key`; `manila` is the default and is stored
@@ -43,6 +53,70 @@ const FOLDER_COLORS: { key: string; label: string; value: string }[] = [
 // undefined so the CSS `var(--folder-color, …)` fallback takes over.
 function folderColorValue(key?: string): string | undefined {
   return FOLDER_COLORS.find((c) => c.key === key)?.value
+}
+
+// ---------------------------------------------------------------------------
+// Optimistic index transforms — mirror the store mutations on the in-memory
+// snapshot so the grid reacts the instant you drop or delete, instead of
+// freezing until the network round-trip + refetch lands. The subsequent store
+// notify → reload reconciles with server truth (which matches), so there's no
+// flash.
+// ---------------------------------------------------------------------------
+
+function nextOrderLocal(index: CanvasIndex, parent: FolderId | null): number {
+  const peers = [
+    ...index.folders.filter((f) => f.parent === parent),
+    ...index.canvases.filter((c) => c.parent === parent),
+  ]
+  return peers.length === 0 ? 0 : Math.max(...peers.map((p) => p.order)) + 1
+}
+
+function reindexOrder(index: CanvasIndex, parent: FolderId | null, orderedIds: ItemId[]): CanvasIndex {
+  const pos = new Map(orderedIds.map((id, i) => [id, i] as const))
+  return {
+    ...index,
+    canvases: index.canvases.map((c) =>
+      c.parent === parent && pos.has(c.id) ? { ...c, order: pos.get(c.id)! } : c,
+    ),
+    folders: index.folders.map((f) =>
+      f.parent === parent && pos.has(f.id) ? { ...f, order: pos.get(f.id)! } : f,
+    ),
+  }
+}
+
+function applyMoveLocal(index: CanvasIndex, id: ItemId, parent: FolderId | null): CanvasIndex {
+  const order = nextOrderLocal(index, parent)
+  return {
+    ...index,
+    canvases: index.canvases.map((c) => (c.id === id ? { ...c, parent, order } : c)),
+    folders: index.folders.map((f) => (f.id === id ? { ...f, parent, order } : f)),
+  }
+}
+
+function removeItemLocal(index: CanvasIndex, id: ItemId): CanvasIndex {
+  // A folder takes its whole subtree with it (the DB cascades; mirror that here).
+  const doomed = new Set<ItemId>([id])
+  for (let pass = 0; pass < index.folders.length; pass++) {
+    const before = doomed.size
+    for (const f of index.folders) if (f.parent && doomed.has(f.parent)) doomed.add(f.id)
+    if (doomed.size === before) break
+  }
+  return {
+    ...index,
+    folders: index.folders.filter((f) => !doomed.has(f.id)),
+    canvases: index.canvases.filter((c) => !doomed.has(c.id) && !(c.parent && doomed.has(c.parent))),
+  }
+}
+
+// A folder can't be dropped into itself or one of its own descendants.
+function canMoveInto(index: CanvasIndex, draggingId: ItemId, targetFolderId: FolderId): boolean {
+  let cursor: FolderId | null = targetFolderId
+  for (let i = 0; i < index.folders.length + 1 && cursor; i++) {
+    if (cursor === draggingId) return false
+    const f: Folder | undefined = index.folders.find((x) => x.id === cursor)
+    cursor = f ? f.parent : null
+  }
+  return true
 }
 
 const STYLES = `
@@ -91,7 +165,7 @@ const STYLES = `
   background:transparent;border:1.5px solid transparent;color:var(--ink);
   transition:background .15s ease, border-color .15s ease;
 }
-.canvas-menu header.bar .brand .menu-toggle:hover{background:var(--paper-2);border-color:var(--rule)}
+@media (hover: hover){ .canvas-menu header.bar .brand .menu-toggle:hover{background:var(--paper-2);border-color:var(--rule)} }
 
 .canvas-menu .sidebar-backdrop{
   position:fixed;inset:0;background:rgba(24,36,63,0.28);
@@ -119,7 +193,7 @@ const STYLES = `
   background:transparent;border:none;color:var(--ink-soft);
   transition:background .15s ease, color .15s ease;
 }
-.canvas-menu .sidebar-close:hover{background:var(--paper-2);color:var(--ink)}
+@media (hover: hover){ .canvas-menu .sidebar-close:hover{background:var(--paper-2);color:var(--ink)} }
 .canvas-menu .sidebar-nav{display:flex;flex-direction:column;padding:12px 10px;gap:2px}
 .canvas-menu .sidebar-item{
   display:flex;align-items:center;gap:12px;
@@ -128,14 +202,14 @@ const STYLES = `
   font-family:var(--ui);font-size:14px;font-weight:500;text-align:left;
   transition:background .15s ease;
 }
-.canvas-menu .sidebar-item:hover{background:var(--paper-2)}
+@media (hover: hover){ .canvas-menu .sidebar-item:hover{background:var(--paper-2)} }
 .canvas-menu .sidebar-item-icon{
   display:inline-flex;align-items:center;justify-content:center;
   width:22px;height:22px;color:var(--ink-soft);flex-shrink:0;
 }
 .canvas-menu .sidebar-item.danger{color:var(--red)}
 .canvas-menu .sidebar-item.danger .sidebar-item-icon{color:var(--red)}
-.canvas-menu .sidebar-item.danger:hover{background:rgba(180,69,61,0.08)}
+@media (hover: hover){ .canvas-menu .sidebar-item.danger:hover{background:rgba(180,69,61,0.08)} }
 .canvas-menu header.bar .search{
   flex:1;max-width:520px;display:flex;align-items:center;gap:10px;
   border:1.5px solid var(--ink);border-radius:999px;background:#fdfaf2;
@@ -152,11 +226,16 @@ const STYLES = `
   font-family:var(--ui);font-weight:500;font-size:14px;
   padding:9px 16px;border-radius:999px;border:1.5px solid var(--ink);
   background:var(--ink);color:var(--paper);
-  transition:transform .15s ease, background .2s ease;
+  transition:background .2s ease, color .2s ease;
 }
-.canvas-menu .btn:hover{transform:translateY(-1px)}
 .canvas-menu .btn.ghost{background:transparent;color:var(--ink)}
-.canvas-menu .btn.ghost:hover{background:var(--ink);color:var(--paper)}
+/* Hover lift + ghost color-inversion are desktop-only. On iPad there is no real
+   hover, so :hover sticks after a tap — the Import / New folder buttons would
+   flip dark and stay dark. Confine every hover effect to a true pointer. */
+@media (hover: hover){
+  .canvas-menu .btn:hover{transform:translateY(-1px)}
+  .canvas-menu .btn.ghost:hover{background:var(--ink);color:var(--paper)}
+}
 
 .canvas-menu .breadcrumbs{
   display:flex;align-items:center;gap:6px;
@@ -166,7 +245,7 @@ const STYLES = `
   background:none;border:none;cursor:pointer;color:inherit;font:inherit;
   padding:4px 8px;border-radius:4px;
 }
-.canvas-menu .breadcrumbs button:hover{background:rgba(24,36,63,0.06);color:var(--ink)}
+@media (hover: hover){ .canvas-menu .breadcrumbs button:hover{background:rgba(24,36,63,0.06);color:var(--ink)} }
 .canvas-menu .breadcrumbs .sep{color:var(--pencil)}
 .canvas-menu .breadcrumbs .current{color:var(--ink);font-weight:500;padding:4px 8px}
 
@@ -184,10 +263,56 @@ const STYLES = `
   display:flex;flex-direction:column;
   transition:transform .15s ease, box-shadow .15s ease;
   box-shadow:3px 4px 0 rgba(24,36,63,0.06);
+  /* Long-press to pick up a card must not summon the iOS text-selection
+     callout/magnifier or select the card's label. */
+  -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;
+  touch-action:manipulation;
 }
-.canvas-menu .card:hover{transform:translate(-1px,-2px);box-shadow:5px 7px 0 rgba(24,36,63,0.08)}
+/* Hover lift is desktop-only. On iPad there is no real hover, so :hover sticks
+   after a tap and the card stays lifted until you tap elsewhere — choppy. Gate
+   it behind a pointer that can actually hover. */
+@media (hover: hover){
+  .canvas-menu .card:hover{transform:translate(-1px,-2px);box-shadow:5px 7px 0 rgba(24,36,63,0.08)}
+}
 .canvas-menu .card.dragging{opacity:0.4}
 .canvas-menu .card.drop-target{outline:2px dashed var(--accent);outline-offset:-4px}
+/* Deleted cards fade + shrink out before they leave the grid, so removal reads
+   as a deliberate animation instead of an abrupt pop + reflow. */
+.canvas-menu .card.removing{
+  opacity:0;transform:scale(.92);pointer-events:none;
+  transition:opacity .18s ease, transform .18s ease;
+}
+/* The floating "picked-up" chip that follows the finger while dragging a card.
+   Positioned imperatively via transform; pointer-events:none so it never blocks
+   elementFromPoint hit-testing of the cards underneath. */
+.canvas-menu .drag-ghost{
+  position:fixed;left:0;top:0;z-index:200;pointer-events:none;
+  max-width:240px;display:flex;align-items:center;gap:10px;
+  padding:10px 14px;border-radius:10px;
+  background:#fff;border:1.5px solid var(--ink);
+  box-shadow:6px 10px 0 rgba(24,36,63,0.16);
+  font-family:var(--ui);font-size:14px;font-weight:600;color:var(--ink);
+  will-change:transform;
+}
+.canvas-menu .drag-ghost .g-icon{flex-shrink:0;display:inline-flex;color:var(--ink-soft)}
+.canvas-menu .drag-ghost .g-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.canvas-menu .import-overlay{
+  position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;
+  background:rgba(24,36,63,0.28);
+}
+.canvas-menu .import-card{
+  background:#fff;border:1.5px solid var(--ink);border-radius:12px;
+  padding:22px 26px;min-width:260px;text-align:center;
+  box-shadow:6px 10px 0 rgba(24,36,63,0.16);font-family:var(--ui);
+}
+.canvas-menu .import-card .title{font-weight:600;font-size:15px;color:var(--ink);margin-bottom:12px}
+.canvas-menu .import-card .bar{height:6px;border-radius:3px;background:var(--paper-2);overflow:hidden}
+.canvas-menu .import-card .bar > span{display:block;height:100%;background:var(--accent);transition:width .2s ease}
+.canvas-menu .import-card .sub{
+  margin-top:10px;font-family:var(--mono);font-size:11px;color:var(--pencil);
+  letter-spacing:0.06em;text-transform:uppercase;
+}
 /* While the kebab menu is open, lift the whole card above sibling cards so the
    overflowing dropdown isn't covered. Hover applies a transform, which creates
    a stacking context and would otherwise trap the menu's z-index inside the
@@ -271,8 +396,8 @@ const STYLES = `
   color:var(--pencil);
   transition:background .15s ease, color .15s ease;
 }
-.canvas-menu .kebab:hover,
 .canvas-menu .kebab.open{background:var(--paper-2);color:var(--ink)}
+@media (hover: hover){ .canvas-menu .kebab:hover{background:var(--paper-2);color:var(--ink)} }
 
 .canvas-menu .menu{
   position:absolute;top:calc(100% + 6px);right:0;z-index:20;
@@ -286,9 +411,9 @@ const STYLES = `
   width:100%;text-align:left;background:none;border:none;cursor:pointer;
   padding:9px 14px;color:var(--ink);font:inherit;
 }
-.canvas-menu .menu button:hover{background:rgba(24,36,63,0.06)}
+@media (hover: hover){ .canvas-menu .menu button:hover{background:rgba(24,36,63,0.06)} }
 .canvas-menu .menu button.danger{color:var(--red)}
-.canvas-menu .menu button.danger:hover{background:rgba(180,69,61,0.08)}
+@media (hover: hover){ .canvas-menu .menu button.danger:hover{background:rgba(180,69,61,0.08)} }
 .canvas-menu .menu .sep{height:1px;background:var(--rule)}
 
 .canvas-menu .menu-colors-label{
@@ -311,7 +436,7 @@ const STYLES = `
   box-shadow:1px 1px 0 rgba(24,36,63,0.12);
   transition:transform .1s ease;
 }
-.canvas-menu .menu-colors .swatch:hover{transform:translateY(-1px)}
+@media (hover: hover){ .canvas-menu .menu-colors .swatch:hover{transform:translateY(-1px)} }
 .canvas-menu .menu-colors .swatch.active{outline:2px solid var(--accent);outline-offset:2px}
 
 .canvas-menu .empty-state{
@@ -350,6 +475,26 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
   const [draggingId, setDraggingId] = useState<ItemId | null>(null)
   const [dropTargetId, setDropTargetId] = useState<ItemId | null>(null)
   const [rootDropActive, setRootDropActive] = useState(false)
+  // Cards mid fade-out after a delete (still rendered, animating away).
+  const [removingIds, setRemovingIds] = useState<Set<ItemId>>(() => new Set())
+  // Non-null while an import (PDF/image → canvas) is in flight.
+  const [importing, setImporting] = useState<ImportProgress | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Live mirrors the drag controller reads. The controller is built once and
+  // must always see current values, so it reads these refs rather than closing
+  // over render-time state. Synced after each commit; the controller only reads
+  // them inside pointer handlers, which always fire after the commit lands.
+  const indexRef = useRef(index)
+  const parentRef = useRef(parent)
+  const searchRef = useRef(search)
+  const renamingRef = useRef(renamingId)
+  useEffect(() => {
+    indexRef.current = index
+    parentRef.current = parent
+    searchRef.current = search
+    renamingRef.current = renamingId
+  })
 
   // Load the index on mount and whenever the store notifies a change.
   useEffect(() => {
@@ -410,6 +555,27 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
     if (f) setRenamingId(f.id)
   }, [parent])
 
+  // Import one or more PDFs/images into the current folder, then open the last
+  // one. Progress drives a blocking overlay so the user knows it's working
+  // (PDF rasterization + uploads can take a beat).
+  const handleImportFiles = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    setImporting({ phase: 'rendering', done: 0, total: 1 })
+    let lastId: string | null = null
+    try {
+      for (const file of Array.from(files)) {
+        const meta = await importFile({ name: file.name, blob: file }, parent, setImporting)
+        if (meta) lastId = meta.id
+      }
+    } catch (err) {
+      console.error('[import] failed', err)
+      alert('Sorry — that file could not be imported.')
+    } finally {
+      setImporting(null)
+    }
+    if (lastId) onOpenCanvas(lastId)
+  }, [parent, onOpenCanvas])
+
   const handleOpen = useCallback((item: Item) => {
     if (item.kind === 'folder') {
       setParent(item.id)
@@ -419,55 +585,200 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
     }
   }, [onOpenCanvas])
 
-  // ---- drag-and-drop ----
-  const onDragStart = (id: ItemId) => (e: React.DragEvent) => {
-    setDraggingId(id)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', id)
-  }
-  const onDragEnd = () => {
-    setDraggingId(null)
-    setDropTargetId(null)
-    setRootDropActive(false)
-  }
-  const onDragOverItem = (item: Item) => (e: React.DragEvent) => {
-    if (!draggingId || draggingId === item.id) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    setDropTargetId(item.id)
-  }
-  const onDragLeaveItem = () => setDropTargetId(null)
-  const onDropItem = (item: Item) => (e: React.DragEvent) => {
-    e.preventDefault()
-    if (!draggingId || draggingId === item.id) return
-    if (item.kind === 'folder') {
-      void moveItem(draggingId, item.id)
-    } else {
-      const currentChildren = listChildren(index, parent).map((x) => x.id)
-      const fromIdx = currentChildren.indexOf(draggingId)
-      const toIdx = currentChildren.indexOf(item.id)
-      if (fromIdx === -1 || toIdx === -1) {
-        onDragEnd()
+  // Delete with an optimistic fade: the card animates out and is dropped from
+  // the local index right away, so the grid never sits frozen waiting on the
+  // network. The background delete + reload reconciles.
+  const handleDelete = useCallback((item: Item) => {
+    const label = item.kind === 'folder'
+      ? `the folder "${item.name}" and everything inside it`
+      : `"${item.name}"`
+    if (!confirm(`Delete ${label}? This can't be undone.`)) return
+    setOpenMenuId(null)
+    setRemovingIds((prev) => new Set(prev).add(item.id))
+    window.setTimeout(() => {
+      setIndex((prev) => removeItemLocal(prev, item.id))
+      setRemovingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(item.id)
+        return next
+      })
+      void deleteItem(item.id)
+    }, REMOVE_ANIM_MS)
+  }, [])
+
+  // ---- pointer-based drag-and-drop ----
+  // HTML5 drag events don't fire for touch, so cards were undraggable on iPad.
+  // This drives the whole gesture off pointer events: long-press (touch) or a
+  // few px of travel (mouse/pen) picks a card up; a floating ghost follows the
+  // finger; the card under the finger is found with elementFromPoint; on
+  // release we move-into-folder, reorder, or move-to-root — all optimistic.
+  const pointerPosRef = useRef({ x: 0, y: 0 })
+  const dropRef = useRef<{ targetId: ItemId | null; root: boolean }>({ targetId: null, root: false })
+  const ghostRef = useRef<HTMLDivElement | null>(null)
+  const justDraggedRef = useRef(false)
+  const pressRef = useRef<{
+    id: ItemId
+    pointerId: number
+    pointerType: string
+    startX: number
+    startY: number
+    dragging: boolean
+    timer: number
+  } | null>(null)
+
+  const drag = useMemo(() => {
+    const positionGhost = () => {
+      const el = ghostRef.current
+      if (!el) return
+      const { x, y } = pointerPosRef.current
+      el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -62%) rotate(-2deg) scale(1.03)`
+    }
+
+    const hitTest = (x: number, y: number) => {
+      const p = pressRef.current
+      if (!p) return
+      const el = document.elementFromPoint(x, y) as HTMLElement | null
+      if (el?.closest('.root-drop')) {
+        dropRef.current = { targetId: null, root: true }
+        setRootDropActive(true)
+        setDropTargetId(null)
         return
       }
-      const reordered = [...currentChildren]
-      reordered.splice(fromIdx, 1)
-      reordered.splice(toIdx, 0, draggingId)
-      void reorderItems(parent, reordered)
+      const card = el?.closest('.card') as HTMLElement | null
+      const id = card?.getAttribute('data-item-id') ?? null
+      if (id && id !== p.id) {
+        dropRef.current = { targetId: id, root: false }
+        setRootDropActive(false)
+        setDropTargetId(id)
+        return
+      }
+      dropRef.current = { targetId: null, root: false }
+      setRootDropActive(false)
+      setDropTargetId(null)
     }
-    onDragEnd()
-  }
-  const onDragOverRoot = (e: React.DragEvent) => {
+
+    const preventScroll = (e: TouchEvent) => e.preventDefault()
+
+    const finish = () => {
+      const p = pressRef.current
+      if (!p) return
+      if (p.timer) window.clearTimeout(p.timer)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      document.removeEventListener('touchmove', preventScroll)
+      pressRef.current = null
+      dropRef.current = { targetId: null, root: false }
+      setDraggingId(null)
+      setDropTargetId(null)
+      setRootDropActive(false)
+    }
+
+    const beginDrag = () => {
+      const p = pressRef.current
+      if (!p || p.dragging) return
+      p.dragging = true
+      if (p.timer) window.clearTimeout(p.timer)
+      // Suppress the page scroll for the rest of the gesture (touchmove is the
+      // only reliably cancelable scroll source on iOS WKWebView).
+      document.addEventListener('touchmove', preventScroll, { passive: false })
+      void hapticTap()
+      setDraggingId(p.id)
+    }
+
+    const commitDrop = (draggingId: ItemId) => {
+      const { targetId, root } = dropRef.current
+      const idx = indexRef.current
+      const par = parentRef.current
+      if (root) {
+        setIndex((prev) => applyMoveLocal(prev, draggingId, null))
+        void moveItem(draggingId, null)
+        return
+      }
+      if (!targetId) return
+      const target = [...idx.folders, ...idx.canvases].find((it) => it.id === targetId)
+      if (!target) return
+      if (target.kind === 'folder') {
+        if (!canMoveInto(idx, draggingId, target.id)) return
+        setIndex((prev) => applyMoveLocal(prev, draggingId, target.id))
+        void moveItem(draggingId, target.id)
+      } else {
+        const cur = listChildren(idx, par).map((x) => x.id)
+        const from = cur.indexOf(draggingId)
+        const to = cur.indexOf(targetId)
+        if (from === -1 || to === -1) return
+        const next = [...cur]
+        next.splice(from, 1)
+        next.splice(to, 0, draggingId)
+        setIndex((prev) => reindexOrder(prev, par, next))
+        void reorderItems(par, next)
+      }
+    }
+
+    const onMove = (e: PointerEvent) => {
+      const p = pressRef.current
+      if (!p || e.pointerId !== p.pointerId) return
+      pointerPosRef.current = { x: e.clientX, y: e.clientY }
+      if (!p.dragging) {
+        const dist = Math.hypot(e.clientX - p.startX, e.clientY - p.startY)
+        if (p.pointerType === 'touch') {
+          if (dist > TOUCH_MOVE_CANCEL) finish() // it's a scroll, let go
+        } else if (dist > MOUSE_DRAG_START) {
+          beginDrag()
+        }
+        return
+      }
+      positionGhost()
+      hitTest(e.clientX, e.clientY)
+    }
+
+    const onUp = (e: PointerEvent) => {
+      const p = pressRef.current
+      if (!p || e.pointerId !== p.pointerId) return
+      if (p.dragging) {
+        commitDrop(p.id)
+        justDraggedRef.current = true
+      }
+      finish()
+    }
+
+    const onCardPointerDown = (item: Item) => (e: React.PointerEvent) => {
+      if (e.button !== 0) return
+      if (searchRef.current.trim()) return // reordering search results is meaningless
+      if (renamingRef.current === item.id) return
+      const t = e.target as HTMLElement
+      if (t.closest('.kebab') || t.closest('.menu') || t.closest('input')) return
+      if (pressRef.current) finish() // a stray earlier press — clean up first
+      justDraggedRef.current = false
+      pointerPosRef.current = { x: e.clientX, y: e.clientY }
+      pressRef.current = {
+        id: item.id,
+        pointerId: e.pointerId,
+        pointerType: e.pointerType,
+        startX: e.clientX,
+        startY: e.clientY,
+        dragging: false,
+        timer: e.pointerType === 'touch' ? window.setTimeout(beginDrag, LONG_PRESS_MS) : 0,
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    }
+
+    return { onCardPointerDown }
+  }, [])
+
+  const draggingItem = draggingId ? items.find((i) => i.id === draggingId) ?? null : null
+
+  // Place the ghost at the finger the moment it appears (before paint, so there's
+  // no top-left flash); pointer moves then reposition it imperatively.
+  useLayoutEffect(() => {
     if (!draggingId) return
-    e.preventDefault()
-    setRootDropActive(true)
-  }
-  const onDropToRoot = (e: React.DragEvent) => {
-    e.preventDefault()
-    if (!draggingId) return
-    void moveItem(draggingId, null)
-    onDragEnd()
-  }
+    const el = ghostRef.current
+    if (!el) return
+    const { x, y } = pointerPosRef.current
+    el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -62%) rotate(-2deg) scale(1.03)`
+  }, [draggingId])
 
   return (
     <div className="canvas-menu">
@@ -507,6 +818,20 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
         </div>
 
         <div className="actions">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/pdf,image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              void handleImportFiles(e.target.files)
+              e.target.value = '' // allow re-importing the same file
+            }}
+          />
+          <button className="btn ghost" onClick={() => fileInputRef.current?.click()}>
+            <UploadIcon /> Import
+          </button>
           <button className="btn ghost" onClick={() => void handleNewFolder()}>
             <FolderPlusIcon /> New folder
           </button>
@@ -544,21 +869,20 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
                 index={index}
                 isDragging={draggingId === item.id}
                 isDropTarget={dropTargetId === item.id && draggingId !== item.id}
+                isRemoving={removingIds.has(item.id)}
                 isRenaming={renamingId === item.id}
                 isMenuOpen={openMenuId === item.id}
                 showLocation={!!search}
-                onOpen={() => handleOpen(item)}
+                onOpen={() => {
+                  // Swallow the click synthesized right after a drag release.
+                  if (justDraggedRef.current) { justDraggedRef.current = false; return }
+                  handleOpen(item)
+                }}
                 onRequestRename={() => setRenamingId(item.id)}
                 onCommitRename={(name) => { void renameItem(item.id, name); setRenamingId(null) }}
                 onCancelRename={() => setRenamingId(null)}
                 onToggleMenu={() => setOpenMenuId((cur) => cur === item.id ? null : item.id)}
-                onDelete={() => {
-                  const label = item.kind === 'folder' ? `the folder "${item.name}" and everything inside it` : `"${item.name}"`
-                  if (confirm(`Delete ${label}? This can't be undone.`)) {
-                    void deleteItem(item.id)
-                    setOpenMenuId(null)
-                  }
-                }}
+                onDelete={() => handleDelete(item)}
                 onDuplicate={() => {
                   if (item.kind !== 'canvas') return
                   void duplicateCanvas(item.id)
@@ -569,27 +893,43 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
                   void setFolderColor(item.id, color)
                   setOpenMenuId(null)
                 }}
-                onDragStart={onDragStart(item.id)}
-                onDragEnd={onDragEnd}
-                onDragOver={onDragOverItem(item)}
-                onDragLeave={onDragLeaveItem}
-                onDrop={onDropItem(item)}
+                onPointerDown={drag.onCardPointerDown(item)}
               />
             ))}
           </div>
         )}
 
         {!search && parent != null && (
-          <div
-            className={`root-drop ${rootDropActive ? 'active' : ''}`}
-            onDragOver={onDragOverRoot}
-            onDragLeave={() => setRootDropActive(false)}
-            onDrop={onDropToRoot}
-          >
+          <div className={`root-drop ${rootDropActive ? 'active' : ''}`}>
             ↑ drag here to move to All canvases
           </div>
         )}
       </main>
+
+      {importing && (
+        <div className="import-overlay" role="status" aria-live="polite">
+          <div className="import-card">
+            <div className="title">
+              {importing.phase === 'rendering' ? 'Reading your file…' : 'Importing…'}
+            </div>
+            <div className="bar">
+              <span style={{ width: `${Math.round((importing.done / Math.max(1, importing.total)) * 100)}%` }} />
+            </div>
+            <div className="sub">
+              {importing.phase === 'rendering' ? 'Rendering' : 'Uploading'} {importing.done}/{importing.total}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {draggingItem && (
+        <div className="drag-ghost" ref={ghostRef} aria-hidden="true">
+          <span className="g-icon">
+            {draggingItem.kind === 'folder' ? <MiniFolderIcon /> : <MiniPageIcon />}
+          </span>
+          <span className="g-name">{draggingItem.name}</span>
+        </div>
+      )}
 
       <Sidebar
         open={sidebarOpen}
@@ -686,6 +1026,7 @@ type CardProps = {
   index: CanvasIndex
   isDragging: boolean
   isDropTarget: boolean
+  isRemoving: boolean
   isRenaming: boolean
   isMenuOpen: boolean
   showLocation: boolean
@@ -697,11 +1038,7 @@ type CardProps = {
   onDelete: () => void
   onDuplicate: () => void
   onSetColor: (color: string | null) => void
-  onDragStart: (e: React.DragEvent) => void
-  onDragEnd: () => void
-  onDragOver: (e: React.DragEvent) => void
-  onDragLeave: () => void
-  onDrop: (e: React.DragEvent) => void
+  onPointerDown: (e: React.PointerEvent) => void
 }
 
 function Card({
@@ -709,6 +1046,7 @@ function Card({
   index,
   isDragging,
   isDropTarget,
+  isRemoving,
   isRenaming,
   isMenuOpen,
   showLocation,
@@ -720,11 +1058,7 @@ function Card({
   onDelete,
   onDuplicate,
   onSetColor,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDragLeave,
-  onDrop,
+  onPointerDown,
 }: CardProps) {
   const isFolder = item.kind === 'folder'
   const folderColor = isFolder ? folderColorValue((item as Folder).color) : undefined
@@ -733,16 +1067,12 @@ function Card({
     : undefined
   return (
     <div
-      className={`card ${isFolder ? 'folder-card' : ''} ${isMenuOpen ? 'menu-open' : ''} ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''}`}
+      className={`card ${isFolder ? 'folder-card' : ''} ${isMenuOpen ? 'menu-open' : ''} ${isDragging ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''} ${isRemoving ? 'removing' : ''}`}
       style={cardStyle}
-      draggable={!isRenaming}
+      data-item-id={item.id}
       onClick={() => { if (!isRenaming) onOpen() }}
       onDoubleClick={(e) => { e.stopPropagation(); onRequestRename() }}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
+      onPointerDown={onPointerDown}
     >
       <div className={`thumb ${isFolder ? 'folder' : ''}`}>
         {isFolder ? <FolderSheets index={index} folder={item as Folder} /> : <CanvasThumb canvas={item as CanvasMeta} />}
@@ -943,6 +1273,29 @@ function FolderPlusIcon() {
     <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
       <path d="M 2 6 L 2 16 Q 2 17 3 17 L 17 17 Q 18 17 18 16 L 18 8 Q 18 7 17 7 L 9 7 L 7 5 L 3 5 Q 2 5 2 6 Z" stroke="currentColor" strokeWidth="1.5" />
       <path d="M 13 11 L 13 15 M 11 13 L 15 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+function MiniFolderIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+      <path d="M 2 6 L 2 16 Q 2 17 3 17 L 17 17 Q 18 17 18 16 L 18 8 Q 18 7 17 7 L 9 7 L 7 5 L 3 5 Q 2 5 2 6 Z" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  )
+}
+function MiniPageIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+      <path d="M 5 2.5 L 12 2.5 L 15.5 6 L 15.5 17.5 L 5 17.5 Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M 12 2.5 L 12 6 L 15.5 6" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  )
+}
+function UploadIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 20 20" fill="none">
+      <path d="M 10 13 L 10 3 M 6 7 L 10 3 L 14 7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M 4 13 L 4 16 Q 4 17 5 17 L 15 17 Q 16 17 16 16 L 16 13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   )
 }

@@ -8,7 +8,28 @@
  */
 import { useEffect, useRef } from 'react'
 import { WhiteboardEngine } from './engine'
-import { loadDoc } from './persistence'
+import { downloadBackground, loadDoc } from './persistence'
+
+/**
+ * Resolve every imported page background to a decoded bitmap and hand it to the
+ * engine. Images come down as Blobs via the SDK and are wrapped in object URLs
+ * so the canvas they're drawn onto stays same-origin (untainted) for export.
+ * `isCancelled` lets the caller bail if the canvas unmounts mid-load.
+ */
+async function loadBackgrounds(engine: WhiteboardEngine, isCancelled: () => boolean): Promise<void> {
+  for (const bg of engine.pageBackgrounds()) {
+    const blob = await downloadBackground(bg.path)
+    if (isCancelled() || !blob) continue
+    const url = URL.createObjectURL(blob)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      if (!isCancelled()) engine.setPageBackgroundImage(bg.page, img)
+    }
+    img.onerror = () => URL.revokeObjectURL(url)
+    img.src = url
+  }
+}
 
 export function Canvas({
   canvasId,
@@ -47,6 +68,7 @@ export function Canvas({
       observer.observe(container)
 
       onMountRef.current?.(engine)
+      void loadBackgrounds(engine, () => cancelled)
     })
 
     return () => {

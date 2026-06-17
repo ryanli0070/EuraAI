@@ -115,6 +115,86 @@ function distSqToSegment(px: number, py: number, ax: number, ay: number, bx: num
 }
 
 /**
+ * Convex hull of a point set (Andrew's monotone chain), returned counter-
+ * clockwise as [x,y] pairs. Used to turn a scratch-out scribble into the area
+ * it swept, so erasing is bound by the region covered rather than the exact ink
+ * path. Returns the input (deduped) when there are fewer than 3 distinct points.
+ */
+export function convexHull(points: { x: number; y: number }[]): number[][] {
+  const pts = points.map((p) => [p.x, p.y] as [number, number])
+  pts.sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]))
+  // Drop exact duplicates so the cross-product test is well-behaved.
+  const uniq: [number, number][] = []
+  for (const p of pts) {
+    const last = uniq[uniq.length - 1]
+    if (!last || last[0] !== p[0] || last[1] !== p[1]) uniq.push(p)
+  }
+  if (uniq.length < 3) return uniq.map((p) => [p[0], p[1]])
+
+  const cross = (o: number[], a: number[], b: number[]): number =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+  const lower: number[][] = []
+  for (const p of uniq) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+      lower.pop()
+    }
+    lower.push(p)
+  }
+  const upper: number[][] = []
+  for (let i = uniq.length - 1; i >= 0; i--) {
+    const p = uniq[i]
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+      upper.pop()
+    }
+    upper.push(p)
+  }
+  lower.pop()
+  upper.pop()
+  return lower.concat(upper)
+}
+
+/**
+ * Grow a convex polygon outward by `margin` page units, pushing each vertex
+ * away from the centroid. An approximation (not a true offset), but good enough
+ * for the blobby hull of a scribble — it lets ink whose spine grazes just past
+ * the hull edge still count as inside.
+ */
+export function expandPolygon(poly: number[][], margin: number): number[][] {
+  const n = poly.length
+  if (n === 0 || margin <= 0) return poly
+  let cx = 0
+  let cy = 0
+  for (const [x, y] of poly) {
+    cx += x
+    cy += y
+  }
+  cx /= n
+  cy /= n
+  return poly.map(([x, y]) => {
+    const dx = x - cx
+    const dy = y - cy
+    const d = Math.hypot(dx, dy)
+    if (d === 0) return [x, y]
+    return [x + (dx / d) * margin, y + (dy / d) * margin]
+  })
+}
+
+/** True if (x,y) is inside the polygon (ray-casting). Boundary counts as in. */
+export function pointInPolygon(poly: number[][], x: number, y: number): boolean {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0]
+    const yi = poly[i][1]
+    const xj = poly[j][0]
+    const yj = poly[j][1]
+    const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
+    if (intersects) inside = !inside
+  }
+  return inside
+}
+
+/**
  * True if (x,y) lands within `radius` page units of the stroke spine. Used by
  * both the eraser and the select tool's click hit-test.
  */

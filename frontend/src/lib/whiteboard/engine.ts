@@ -19,7 +19,10 @@
 import { exportPng, type ExportOptions } from './export'
 import {
   boundsIntersect,
+  convexHull,
+  expandPolygon,
   outlineToPath2D,
+  pointInPolygon,
   strokeBounds,
   strokeHit,
   strokeOutline,
@@ -27,7 +30,7 @@ import {
 } from './geometry'
 import { History } from './history'
 import { saveDoc } from './persistence'
-import type { EngineState, Stroke, ToolId, WhiteboardDoc } from './types'
+import type { EngineState, PageBackground, Stroke, ToolId, WhiteboardDoc } from './types'
 
 const MIN_ZOOM = 0.1
 const MAX_ZOOM = 8
@@ -193,6 +196,12 @@ export class WhiteboardEngine {
   private shadowKey = ''
   private shadowBaseW = 0
 
+  // Imported page backgrounds (PDF pages / photos), keyed by page index. The
+  // doc holds only the Storage path + natural dimensions; the React layer
+  // resolves the path to a signed URL, decodes the bitmap, and hands it over
+  // via setPageBackgroundImage. Drawn fit-to-page beneath grid + ink.
+  private bgImages = new Map<number, HTMLImageElement>()
+
   private doc: WhiteboardDoc
   private history: History
 
@@ -298,7 +307,11 @@ export class WhiteboardEngine {
   // ---------------------------------------------------------------------
 
   private numPages(): number {
-    return this.doc.pageCount && this.doc.pageCount > 0 ? this.doc.pageCount : 1
+    const fromCount = this.doc.pageCount && this.doc.pageCount > 0 ? this.doc.pageCount : 1
+    // An imported background guarantees its page exists even if pageCount lags.
+    let fromBg = 0
+    for (const b of this.doc.backgrounds ?? []) fromBg = Math.max(fromBg, b.page + 1)
+    return Math.max(fromCount, fromBg, 1)
   }
 
   /** Left edge (page/storage units) of page `i`. */
@@ -543,6 +556,11 @@ export class WhiteboardEngine {
       ctx.fillRect(Math.round(left * dpr), Math.round(top * dpr), Math.round(sw * dpr), Math.round(sh * dpr))
     }
 
+    // Pages that carry an imported background: their grid is suppressed so the
+    // PDF/photo reads cleanly (the bitmap is the "paper"), whether or not its
+    // image has finished decoding yet.
+    const bgPages = new Set((this.doc.backgrounds ?? []).map((b) => b.page))
+
     // Decor + ink, page by page, each drawn from its own storage origin.
     for (let i = 0; i < n; i++) {
       const left = this.pageScreenLeft(i)
@@ -553,7 +571,8 @@ export class WhiteboardEngine {
       ctx.translate(left - storeLeft * z, top)
       ctx.scale(z, z)
 
-      this.renderPageDecor(storeLeft)
+      this.drawPageBackground(i, storeLeft)
+      this.renderPageDecor(storeLeft, bgPages.has(i))
 
       ctx.save()
       ctx.beginPath()
@@ -581,12 +600,33 @@ export class WhiteboardEngine {
     this.renderOverlay()
   }
 
-  /** Faint grid (clipped to the sheet) plus a hairline border, in storage coords. */
-  private renderPageDecor(left: number): void {
+  /** Draw an imported page background (PDF page / photo) fit within the sheet,
+   *  centered and aspect-preserved, clipped to the page. No-op until the React
+   *  layer has supplied the decoded bitmap for this page. */
+  private drawPageBackground(page: number, left: number): void {
+    const img = this.bgImages.get(page)
+    if (!img || !img.naturalWidth || !img.naturalHeight) return
+    const { ctx } = this
+    const scale = Math.min(PAGE_W / img.naturalWidth, PAGE_H / img.naturalHeight)
+    const dw = img.naturalWidth * scale
+    const dh = img.naturalHeight * scale
+    const dx = left + (PAGE_W - dw) / 2
+    const dy = (PAGE_H - dh) / 2
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(left, 0, PAGE_W, PAGE_H)
+    ctx.clip()
+    ctx.drawImage(img, dx, dy, dw, dh)
+    ctx.restore()
+  }
+
+  /** Faint grid (clipped to the sheet) plus a hairline border, in storage coords.
+   *  The grid is skipped on imported pages so it doesn't clutter the bitmap. */
+  private renderPageDecor(left: number, hasBackground = false): void {
     const { ctx } = this
     const px = 1 / this.zoom
 
-    if (this.showGrid) {
+    if (this.showGrid && !hasBackground) {
       ctx.save()
       ctx.beginPath()
       ctx.rect(left, 0, PAGE_W, PAGE_H)
@@ -1126,17 +1166,21 @@ export class WhiteboardEngine {
   private tryScribbleErase(stroke: Stroke): boolean {
     if (!isScribble(stroke.points)) return false
     const sb = strokeBounds(stroke)
+    // Erasing is bound by the AREA the scribble swept, not the exact ink path:
+    // take the convex hull of the scribble and grow it by the pen half-width so
+    // anything sitting inside that region is fair game. A stroke only needs to
+    // fall inside the hull — the scribble line itself need not touch it.
+    const hull = expandPolygon(convexHull(stroke.points), stroke.size / 2 + 6)
     const victims = new Set<string>()
     for (const s of this.doc.strokes) {
       if (s.points.length === 0) continue
       if (!boundsIntersect(sb, strokeBounds(s))) continue
-      // How much of THIS stroke does the scribble's spine pass over? Delete it
-      // only when most of it is covered, so a scribble grazing a long stroke
-      // doesn't wipe the whole thing.
-      const radius = s.size / 2 + 6
+      // How much of THIS stroke lies within the scribbled area? Delete it only
+      // when most of it is inside, so a scribble overlapping the tip of a long
+      // stroke doesn't wipe the whole thing.
       let covered = 0
       for (const p of s.points) {
-        if (strokeHit(stroke, p.x, p.y, radius)) covered++
+        if (pointInPolygon(hull, p.x, p.y)) covered++
       }
       if (covered / s.points.length >= SCRIBBLE_COVER) victims.add(s.id)
     }
@@ -1384,6 +1428,20 @@ export class WhiteboardEngine {
     if (tool !== 'select') this.selection.clear()
     if (tool !== 'eraser') this.hideEraserCursor()
     this.emit()
+    this.requestRender()
+  }
+
+  /** List the imported page backgrounds so the React layer can resolve each
+   *  Storage path to a URL, decode it, and feed the bitmap back in. */
+  pageBackgrounds(): PageBackground[] {
+    return this.doc.backgrounds ?? []
+  }
+
+  /** Hand over (or clear) the decoded bitmap for a page's imported background.
+   *  The doc already carries the path + dimensions; this supplies the pixels. */
+  setPageBackgroundImage(page: number, img: HTMLImageElement | null): void {
+    if (img) this.bgImages.set(page, img)
+    else this.bgImages.delete(page)
     this.requestRender()
   }
 

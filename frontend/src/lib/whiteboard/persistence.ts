@@ -81,6 +81,82 @@ export async function deleteDoc(canvasId: string): Promise<void> {
       .from(BUCKET)
       .remove([pathFor(userId, canvasId)])
     if (error && !isNotFound(error)) console.warn('[whiteboard] deleteDoc', error)
+    await deleteBackgrounds(canvasId)
+  } catch {
+    /* non-fatal */
+  }
+}
+
+// ============================================================================
+// Imported page backgrounds (PDF pages / photos)
+//
+// Stored in the same private `drawings` bucket, under a per-canvas subfolder:
+//   drawings/{user_id}/{canvas_id}/bg/{page}.png
+// The RLS policy keys on the first path segment (the user id), so the existing
+// "own files only" rules already cover these without a new bucket or migration.
+// ============================================================================
+
+function bgFolderFor(userId: string, canvasId: string): string {
+  return `${userId}/${canvasId}/bg`
+}
+
+function bgPathFor(userId: string, canvasId: string, page: number): string {
+  return `${bgFolderFor(userId, canvasId)}/${page}.png`
+}
+
+/** Upload one rendered page image. Returns its Storage object key, or null. */
+export async function uploadBackground(
+  canvasId: string,
+  page: number,
+  blob: Blob,
+): Promise<string | null> {
+  try {
+    const userId = await currentUserId()
+    if (!userId) return null
+    const path = bgPathFor(userId, canvasId, page)
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, blob, { upsert: true, contentType: 'image/png' })
+    if (error) {
+      console.warn('[whiteboard] uploadBackground', error)
+      return null
+    }
+    return path
+  } catch (err) {
+    console.warn('[whiteboard] uploadBackground failed', err)
+    return null
+  }
+}
+
+/**
+ * Download a background image as a Blob (via the SDK, not a public URL). The
+ * caller turns it into an object URL — same-origin, so the canvas it's drawn
+ * onto never gets tainted and PNG export / thumbnails keep working.
+ */
+export async function downloadBackground(path: string): Promise<Blob | null> {
+  try {
+    const { data, error } = await supabase.storage.from(BUCKET).download(path)
+    if (error || !data) {
+      if (error && !isNotFound(error)) console.warn('[whiteboard] downloadBackground', error)
+      return null
+    }
+    return data
+  } catch (err) {
+    console.warn('[whiteboard] downloadBackground failed', err)
+    return null
+  }
+}
+
+/** Best-effort removal of a canvas's whole background folder (on canvas delete). */
+export async function deleteBackgrounds(canvasId: string): Promise<void> {
+  try {
+    const userId = await currentUserId()
+    if (!userId) return
+    const folder = bgFolderFor(userId, canvasId)
+    const { data, error } = await supabase.storage.from(BUCKET).list(folder)
+    if (error || !data || data.length === 0) return
+    const paths = data.map((f) => `${folder}/${f.name}`)
+    await supabase.storage.from(BUCKET).remove(paths)
   } catch {
     /* non-fatal */
   }

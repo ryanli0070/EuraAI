@@ -241,7 +241,10 @@ function nextOrder(idx: CanvasIndex, parent: FolderId | null): number {
   return peers.length === 0 ? 0 : Math.max(...peers.map((p) => p.order)) + 1
 }
 
-export async function createCanvas(parent: FolderId | null = null): Promise<CanvasMeta | null> {
+export async function createCanvas(
+  parent: FolderId | null = null,
+  name: string = DEFAULT_CANVAS_NAME,
+): Promise<CanvasMeta | null> {
   const userId = await requireUserId()
   const idx = await loadIndex()
   const order = nextOrder(idx, parent)
@@ -250,7 +253,7 @@ export async function createCanvas(parent: FolderId | null = null): Promise<Canv
     .insert({
       user_id: userId,
       parent_id: parent,
-      name: DEFAULT_CANVAS_NAME,
+      name: name.trim() || DEFAULT_CANVAS_NAME,
       sort_order: order,
     })
     .select()

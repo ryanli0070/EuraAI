@@ -22,6 +22,20 @@ export type Stroke = {
   pen?: boolean
 }
 
+/**
+ * A bitmap pinned behind a page — an imported PDF page or photo the user
+ * annotates over. `path` is the Supabase Storage object key (the image bytes
+ * live there, not in the doc); `w`/`h` are the image's natural pixel size, used
+ * to fit it within the page while preserving aspect ratio. `page` is the
+ * zero-based page index it sits on.
+ */
+export type PageBackground = {
+  page: number
+  path: string
+  w: number
+  h: number
+}
+
 export type WhiteboardDoc = {
   version: 1
   strokes: Stroke[]
@@ -30,6 +44,11 @@ export type WhiteboardDoc = {
    * are treated as a single page.
    */
   pageCount?: number
+  /**
+   * Imported page backgrounds (PDF pages / photos). Additive + optional, so
+   * older docs simply have none and the schema version is unchanged.
+   */
+  backgrounds?: PageBackground[]
 }
 
 export const emptyDoc = (): WhiteboardDoc => ({ version: 1, strokes: [], pageCount: 1 })
