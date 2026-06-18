@@ -21,7 +21,7 @@ import {
   setFolderColor,
   subscribe,
 } from '../lib/canvasStore'
-import { deleteAccount, signOut } from '../lib/auth'
+import { signOut } from '../lib/auth'
 import { hapticTap } from '../lib/native'
 import { importFile, type ImportProgress } from '../lib/import'
 import { AccountScreen, type AccountScreenId } from './AccountScreen'
@@ -207,9 +207,6 @@ const STYLES = `
   display:inline-flex;align-items:center;justify-content:center;
   width:22px;height:22px;color:var(--ink-soft);flex-shrink:0;
 }
-.canvas-menu .sidebar-item.danger{color:var(--red)}
-.canvas-menu .sidebar-item.danger .sidebar-item-icon{color:var(--red)}
-@media (hover: hover){ .canvas-menu .sidebar-item.danger:hover{background:rgba(180,69,61,0.08)} }
 .canvas-menu header.bar .search{
   flex:1;max-width:520px;display:flex;align-items:center;gap:10px;
   border:1.5px solid var(--ink);border-radius:999px;background:#fdfaf2;
@@ -936,12 +933,6 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
         onClose={() => setSidebarOpen(false)}
         onOpenScreen={(id) => { setSidebarOpen(false); setAccountScreen(id) }}
         onSignOut={() => { setSidebarOpen(false); void signOut() }}
-        onDeleteAccount={async () => {
-          if (!confirm('Permanently delete your account and every canvas, folder, and chat? This cannot be undone.')) return
-          const err = await deleteAccount()
-          if (err) alert(err)
-          // On success, the auth state change routes back to the sign-in screen.
-        }}
       />
 
       <AccountScreen screen={accountScreen} onClose={() => setAccountScreen(null)} />
@@ -954,13 +945,11 @@ function Sidebar({
   onClose,
   onOpenScreen,
   onSignOut,
-  onDeleteAccount,
 }: {
   open: boolean
   onClose: () => void
   onOpenScreen: (id: AccountScreenId) => void
   onSignOut: () => void
-  onDeleteAccount: () => void
 }) {
   useEffect(() => {
     if (!open) return
@@ -977,7 +966,6 @@ function Sidebar({
     { label: 'Payments', icon: PaymentsIcon, onClick: () => onOpenScreen('payments') },
     { label: 'Help & Support', icon: HelpIcon, onClick: () => onOpenScreen('help') },
     { label: 'Sign Out', icon: SignOutIcon, onClick: onSignOut },
-    { label: 'Delete Account', icon: TrashIcon, onClick: onDeleteAccount, danger: true },
   ]
 
   return (
@@ -1369,15 +1357,6 @@ function SignOutIcon() {
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
       <path d="M 11 3 L 4 3 Q 3 3 3 4 L 3 16 Q 3 17 4 17 L 11 17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       <path d="M 8 10 L 17 10 M 14 7 L 17 10 L 14 13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-function TrashIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-      <path d="M 4 6 L 16 6 M 8 6 L 8 4 Q 8 3.5 8.5 3.5 L 11.5 3.5 Q 12 3.5 12 4 L 12 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M 5.6 6 L 6.3 16 Q 6.35 16.7 7 16.7 L 13 16.7 Q 13.65 16.7 13.7 16 L 14.4 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M 8.6 9 L 8.8 14 M 11.4 9 L 11.2 14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   )
 }

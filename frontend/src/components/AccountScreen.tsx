@@ -20,8 +20,9 @@ import {
   Mail,
   ShieldCheck,
   Sparkles,
+  Trash2,
 } from 'lucide-react'
-import { useSession } from '../lib/auth'
+import { deleteAccount, useSession } from '../lib/auth'
 import {
   getScrollVertical,
   getShowGrid,
@@ -152,6 +153,13 @@ function SettingsScreen() {
     setScrollVertical(value)
   }
 
+  const handleDeleteAccount = async () => {
+    if (!confirm('Permanently delete your account and every canvas, folder, and chat? This cannot be undone.')) return
+    const err = await deleteAccount()
+    if (err) alert(err)
+    // On success, the auth state change routes back to the sign-in screen.
+  }
+
   return (
     <>
       <section className="acct-section">
@@ -183,6 +191,19 @@ function SettingsScreen() {
             </span>
             <ExternalLink size={16} className="row-chev" />
           </a>
+        </div>
+      </section>
+
+      <section className="acct-section">
+        <div className="label">Danger zone</div>
+        <div className="acct-card">
+          <button type="button" className="acct-row as-button danger-row" onClick={() => void handleDeleteAccount()}>
+            <span className="row-icon"><Trash2 size={18} /></span>
+            <span className="row-main">
+              <span className="row-label">Delete account</span>
+              <span className="row-sub">Permanently removes your account and every canvas, folder, and chat — can't be undone</span>
+            </span>
+          </button>
         </div>
       </section>
 
@@ -267,8 +288,8 @@ function HelpScreen() {
             Yes. Your canvases are tied to your account and only visible to you.
           </FaqItem>
           <FaqItem q="How do I delete my account?">
-            Open the menu and choose Delete Account. That permanently removes your account and
-            every canvas, folder, and chat — it can't be undone.
+            Open Settings and, under Danger zone, choose Delete account. That permanently removes
+            your account and every canvas, folder, and chat — it can't be undone.
           </FaqItem>
         </div>
       </section>
@@ -434,6 +455,9 @@ const STYLES = `
 .account-screen .as-button{border:none;cursor:pointer;font:inherit;color:inherit}
 .account-screen .as-button:not(:disabled):hover{background:var(--paper-2)}
 .account-screen .as-button:disabled{cursor:default}
+.account-screen .danger-row .row-icon,
+.account-screen .danger-row .row-label{color:var(--red)}
+.account-screen .danger-row:not(:disabled):hover{background:rgba(180,69,61,0.08)}
 .account-screen .row-icon{display:inline-flex;color:var(--ink-soft);flex-shrink:0}
 .account-screen .row-main{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}
 .account-screen .row-label{font-size:14.5px;font-weight:600;color:var(--ink)}
