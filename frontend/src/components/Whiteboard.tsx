@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChevronLeft,
+  ClipboardPaste,
   Copy,
   Eraser,
   FilePlus,
+  Lasso,
   MousePointer2,
   Pencil,
   Redo2,
+  Scissors,
   Trash2,
   Undo2,
 } from 'lucide-react'
@@ -80,6 +83,8 @@ const DEFAULT_ENGINE_STATE: EngineState = {
   canRedo: false,
   isEmpty: true,
   hasSelection: false,
+  hasClipboard: false,
+  selectionMenu: null,
   pull: 0,
   page: 0,
   pageCount: 1,
@@ -191,7 +196,9 @@ export function Whiteboard({
   const captureCanvas = useCallback(async () => {
     const engine = engineRef.current
     if (!engine || engine.isEmpty()) return null
-    const blob = await engine.toImage({ padding: 32, scale: 2, background: true })
+    // toCheckImage scopes to the lasso/marquee selection when one is active,
+    // otherwise to the page in view — so Check Work grades only the lasso'd work.
+    const blob = await engine.toCheckImage({ padding: 32, scale: 2, background: true })
     if (!blob) return null
     const formData = new FormData()
     formData.append('file', blob, 'capture.png')
@@ -337,6 +344,7 @@ export function Whiteboard({
         onUndo={() => engineRef.current?.undo()}
         onRedo={() => engineRef.current?.redo()}
         onDuplicate={() => engineRef.current?.duplicateSelected()}
+        onPaste={() => engineRef.current?.paste()}
         onClear={handleClear}
         assistant={{
           messages,
@@ -350,6 +358,17 @@ export function Whiteboard({
           onOpenChange: setAssistantOpen,
         }}
       />
+
+      {engineState.selectionMenu && (
+        <SelectionMenu
+          anchor={engineState.selectionMenu}
+          canPaste={engineState.hasClipboard}
+          onCut={() => engineRef.current?.cutSelected()}
+          onCopy={() => engineRef.current?.copySelected()}
+          onPaste={() => engineRef.current?.paste()}
+          onDelete={() => engineRef.current?.deleteSelected()}
+        />
+      )}
 
       {showColorPanel && engineState.tool === 'draw' && (
         <div className="absolute left-1/2 top-16 z-[999] flex -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white/95 px-3 py-2 shadow-xl backdrop-blur">
@@ -413,6 +432,7 @@ function Toolbar({
   onUndo,
   onRedo,
   onDuplicate,
+  onPaste,
   onClear,
   assistant,
 }: {
@@ -421,6 +441,7 @@ function Toolbar({
   onUndo: () => void
   onRedo: () => void
   onDuplicate: () => void
+  onPaste: () => void
   onClear: () => void
   assistant: {
     messages: ChatMessage[]
@@ -436,6 +457,7 @@ function Toolbar({
 }) {
   const tools: { id: ToolId; label: string; Icon: typeof Pencil }[] = [
     { id: 'select', label: 'Select', Icon: MousePointer2 },
+    { id: 'lasso', label: 'Lasso', Icon: Lasso },
     { id: 'draw', label: 'Draw', Icon: Pencil },
     { id: 'eraser', label: 'Eraser', Icon: Eraser },
   ]
@@ -485,6 +507,14 @@ function Toolbar({
         <Copy className="h-4 w-4" strokeWidth={2.25} />
       </button>
       <button
+        title="Paste"
+        onClick={onPaste}
+        disabled={!state.hasClipboard}
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-100 disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        <ClipboardPaste className="h-4 w-4" strokeWidth={2.25} />
+      </button>
+      <button
         title="Clear board"
         onClick={onClear}
         disabled={state.isEmpty}
@@ -493,6 +523,80 @@ function Toolbar({
         <Trash2 className="h-4 w-4" strokeWidth={2.25} />
       </button>
     </div>
+  )
+}
+
+/**
+ * Floating Cut / Copy / Paste / Delete menu shown above (or below) a lasso or
+ * marquee selection — the touch-friendly trigger for clipboard actions on iPad.
+ * `anchor` is the selection's screen-space horizontal center and vertical
+ * extent; the menu prefers to sit above the selection and flips below when
+ * there isn't room. Horizontally clamped so it never runs off-screen.
+ */
+function SelectionMenu({
+  anchor,
+  canPaste,
+  onCut,
+  onCopy,
+  onPaste,
+  onDelete,
+}: {
+  anchor: { x: number; top: number; bottom: number }
+  canPaste: boolean
+  onCut: () => void
+  onCopy: () => void
+  onPaste: () => void
+  onDelete: () => void
+}) {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1200
+  const x = Math.min(Math.max(anchor.x, 120), vw - 120)
+  const above = anchor.top > 72
+  const top = above ? anchor.top - 10 : anchor.bottom + 10
+  return (
+    <div
+      className="absolute z-[1001] flex items-center gap-0.5 rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-xl backdrop-blur"
+      style={{
+        left: x,
+        top,
+        transform: `translate(-50%, ${above ? '-100%' : '0'})`,
+        touchAction: 'manipulation',
+      }}
+    >
+      <MenuBtn label="Cut" Icon={Scissors} onClick={onCut} />
+      <MenuBtn label="Copy" Icon={Copy} onClick={onCopy} />
+      <MenuBtn label="Paste" Icon={ClipboardPaste} onClick={onPaste} disabled={!canPaste} />
+      <span className="mx-0.5 h-5 w-px bg-neutral-200" />
+      <MenuBtn label="Delete" Icon={Trash2} onClick={onDelete} danger />
+    </div>
+  )
+}
+
+function MenuBtn({
+  label,
+  Icon,
+  onClick,
+  disabled,
+  danger,
+}: {
+  label: string
+  Icon: typeof Copy
+  onClick: () => void
+  disabled?: boolean
+  danger?: boolean
+}) {
+  return (
+    <button
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex h-9 items-center gap-1 rounded-lg px-2.5 text-xs font-semibold transition-colors disabled:opacity-40 ${
+        danger ? 'text-red-600 hover:bg-red-50' : 'text-neutral-700 hover:bg-neutral-100'
+      }`}
+      style={{ touchAction: 'manipulation' }}
+    >
+      <Icon className="h-4 w-4" strokeWidth={2.25} />
+      <span className="leading-none">{label}</span>
+    </button>
   )
 }
 

@@ -227,6 +227,16 @@ export class WhiteboardEngine {
   private color = DEFAULT_COLOR
   private size = DEFAULT_SIZE
   private selection = new Set<string>()
+  // App-local clipboard for copy/cut/paste — the system clipboard has no
+  // meaning for vector strokes. `clipLasso` remembers the source lasso outline
+  // so a pasted selection keeps the same boundary; `pasteShift` grows per
+  // consecutive paste so repeated pastes cascade instead of stacking exactly.
+  private clipboard: Stroke[] = []
+  private clipLasso: { x: number; y: number }[] | null = null
+  private pasteShift = 0
+  // True while any pointer interaction is in flight (draw/move/lasso/pan/pinch),
+  // so the floating selection menu hides until the gesture settles.
+  private interacting = false
   private showGrid = true
   private fitted = false
 
@@ -243,6 +253,12 @@ export class WhiteboardEngine {
   private movingFrom: { x: number; y: number } | null = null
   private movedAny = false
   private marquee: { x0: number; y0: number; x1: number; y1: number } | null = null
+  // Lasso (freehand selection). `lassoPts` collects the raw drawn points (page
+  // coords) while the loop is being drawn; on release they become `lassoPath`,
+  // the closed boundary kept alongside the selection so it can be drawn as a
+  // dashed outline and translated with the strokes when the selection moves.
+  private lassoPts: { x: number; y: number }[] | null = null
+  private lassoPath: { x: number; y: number }[] | null = null
   private panFrom:
     | {
         x: number
@@ -451,6 +467,9 @@ export class WhiteboardEngine {
     this.panY = 0
     this.scroll = this.restScroll(this.page)
     this.requestRender()
+    // Re-fitting moves the camera, so the floating selection menu's anchor
+    // shifts — notify React to reposition it.
+    this.emit()
   }
 
   private requestRender(): void {
@@ -651,12 +670,28 @@ export class WhiteboardEngine {
     ctx.strokeRect(left, 0, PAGE_W, PAGE_H)
   }
 
-  /** Selection box + marquee rectangle, drawn at constant on-screen weight. */
+  /** Selection outline (lasso shape or marquee box) + the in-progress lasso /
+   *  marquee, all drawn at constant on-screen weight. */
   private renderOverlay(): void {
     const { ctx } = this
     const px = 1 / this.zoom
 
-    if (this.selection.size > 0) {
+    if (this.lassoPath && this.lassoPath.length > 1 && this.selection.size > 0) {
+      // Committed lasso: trace the drawn shape so the boundary matches what the
+      // user lassoed (and moves with the strokes when dragged).
+      ctx.strokeStyle = '#2563eb'
+      ctx.lineWidth = 1.5 * px
+      ctx.setLineDash([6 * px, 4 * px])
+      ctx.beginPath()
+      ctx.moveTo(this.lassoPath[0].x, this.lassoPath[0].y)
+      for (let i = 1; i < this.lassoPath.length; i++) {
+        ctx.lineTo(this.lassoPath[i].x, this.lassoPath[i].y)
+      }
+      ctx.closePath()
+      ctx.stroke()
+      ctx.setLineDash([])
+    } else if (this.selection.size > 0) {
+      // Marquee (rectangle-select) selection: a dashed bounding box.
       const selected = this.doc.strokes.filter((s) => this.selection.has(s.id))
       const b = unionBounds(selected)
       if (b) {
@@ -666,6 +701,21 @@ export class WhiteboardEngine {
         ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY)
         ctx.setLineDash([])
       }
+    }
+
+    if (this.lassoPts && this.lassoPts.length > 0) {
+      // Lasso being drawn: a fine dotted line trailing the Pencil. Left open —
+      // the closing chord is implied and only realized on release.
+      ctx.strokeStyle = '#2563eb'
+      ctx.lineWidth = 1.5 * px
+      ctx.setLineDash([2 * px, 5 * px])
+      ctx.beginPath()
+      ctx.moveTo(this.lassoPts[0].x, this.lassoPts[0].y)
+      for (let i = 1; i < this.lassoPts.length; i++) {
+        ctx.lineTo(this.lassoPts[i].x, this.lassoPts[i].y)
+      }
+      ctx.stroke()
+      ctx.setLineDash([])
     }
 
     if (this.marquee) {
@@ -712,6 +762,9 @@ export class WhiteboardEngine {
     // Drop selection ids that no longer exist.
     const ids = new Set(doc.strokes.map((s) => s.id))
     for (const id of this.selection) if (!ids.has(id)) this.selection.delete(id)
+    // The lasso outline is transient UI; an undo/redo may shift the strokes it
+    // framed, so drop it rather than leave it floating in the wrong place.
+    this.lassoPath = null
     this.schedulePersist()
     this.emit()
     this.requestRender()
@@ -849,6 +902,7 @@ export class WhiteboardEngine {
       lastT: performance.now(),
     }
     this.panV = 0
+    this.setInteracting(true)
   }
 
   private onPointerDown = (e: PointerEvent): void => {
@@ -866,7 +920,7 @@ export class WhiteboardEngine {
     // would push pointers.size to 2, cancel the active stroke, and start a
     // phantom pinch-zoom gesture. By bailing here, the touch is never
     // captured and never enters the gesture/pan pipeline.
-    if (e.pointerType === 'touch' && this.drawing) {
+    if (e.pointerType === 'touch' && (this.drawing || this.lassoPts || this.movingFrom)) {
       return
     }
 
@@ -888,6 +942,7 @@ export class WhiteboardEngine {
     // A second finger cancels the single-pointer action and starts a gesture.
     if (this.pointers.size === 2) {
       this.cancelActiveAction()
+      this.setInteracting(true)
       this.beginGesture()
       return
     }
@@ -928,6 +983,7 @@ export class WhiteboardEngine {
     this.scroll = this.restScroll(this.page)
     const page = this.toPage(e.clientX, e.clientY)
 
+    this.setInteracting(true)
     if (this.tool === 'draw') {
       this.drawing = {
         id: uid(),
@@ -943,6 +999,8 @@ export class WhiteboardEngine {
       this.eraseAt(page.x, page.y)
     } else if (this.tool === 'select') {
       this.beginSelect(page.x, page.y)
+    } else if (this.tool === 'lasso') {
+      this.beginLasso(page.x, page.y)
     }
   }
 
@@ -1047,6 +1105,17 @@ export class WhiteboardEngine {
       return
     }
 
+    if (this.lassoPts) {
+      // Coalesced events keep the dotted lasso line smooth on fast loops.
+      const raw = e.getCoalescedEvents?.() ?? [e]
+      for (const ev of raw) {
+        const p = this.toPage(ev.clientX, ev.clientY)
+        this.lassoPts.push({ x: p.x, y: p.y })
+      }
+      this.requestRender()
+      return
+    }
+
     if (this.erasing) {
       const p = this.toPage(e.clientX, e.clientY)
       this.eraseAt(p.x, p.y)
@@ -1081,6 +1150,7 @@ export class WhiteboardEngine {
       else {
         this.gesture = null
         this.endPan()
+        this.setInteracting(false)
       }
       return
     }
@@ -1088,6 +1158,7 @@ export class WhiteboardEngine {
     if (this.panFrom) {
       this.panFrom = null
       this.endPan()
+      this.setInteracting(false)
       return
     }
 
@@ -1104,12 +1175,14 @@ export class WhiteboardEngine {
           this.commit()
         }
       }
+      this.setInteracting(false)
       return
     }
 
     if (this.erasing) {
       this.erasing = false
       if (this.erasedAny) this.commit()
+      this.setInteracting(false)
       return
     }
 
@@ -1117,11 +1190,19 @@ export class WhiteboardEngine {
       this.movingFrom = null
       if (this.movedAny) this.commit()
       this.movedAny = false
+      this.setInteracting(false)
+      return
+    }
+
+    if (this.lassoPts) {
+      this.finishLasso()
+      this.setInteracting(false)
       return
     }
 
     if (this.marquee) {
       this.finishMarquee()
+      this.setInteracting(false)
     }
   }
 
@@ -1133,6 +1214,7 @@ export class WhiteboardEngine {
     this.movingFrom = null
     this.movedAny = false
     this.marquee = null
+    this.lassoPts = null
     this.panFrom = null
     if (this.pullProgress !== 0) {
       this.pullProgress = 0
@@ -1233,6 +1315,13 @@ export class WhiteboardEngine {
       }
       this.pathCache.delete(s.id)
     }
+    // Keep the lasso outline glued to the strokes it surrounds.
+    if (this.lassoPath) {
+      for (const p of this.lassoPath) {
+        p.x += dx
+        p.y += dy
+      }
+    }
     this.requestRender()
   }
 
@@ -1256,6 +1345,90 @@ export class WhiteboardEngine {
   }
 
   // ---------------------------------------------------------------------
+  // Lasso tool (freehand selection)
+  // ---------------------------------------------------------------------
+
+  /** Pointer-down with the lasso tool: drag the current selection if the press
+   *  lands inside it, otherwise start drawing a fresh loop. */
+  private beginLasso(x: number, y: number): void {
+    if (
+      this.lassoPath &&
+      this.selection.size > 0 &&
+      pointInPolygon(this.lassoPath.map((p) => [p.x, p.y]), x, y)
+    ) {
+      // Press inside the lasso → move the selection (reuse the drag path).
+      this.movingFrom = { x, y }
+      this.movedAny = false
+      return
+    }
+    // Fresh loop: drop any prior selection/outline and start collecting points.
+    this.selection.clear()
+    this.lassoPath = null
+    this.lassoPts = [{ x, y }]
+    this.emit()
+    this.requestRender()
+  }
+
+  /**
+   * Close the lasso on pointer-up and select the strokes it fully encloses.
+   *
+   * The boundary is the raw drawn path closed by a single straight segment from
+   * the last point back to the first (ray-casting in `pointInPolygon` closes it
+   * implicitly). No convex hull or smoothing is applied, so the user's shape is
+   * never distorted — a drawn half-circle stays a half-circle (arc + straight
+   * chord). A stroke is selected only when every one of its points lies inside
+   * the loop (GoodNotes-style full enclosure); the lasso bbox gives a cheap
+   * per-point reject before the polygon test.
+   */
+  private finishLasso(): void {
+    const pts = this.lassoPts
+    this.lassoPts = null
+    this.selection.clear()
+    this.lassoPath = null
+
+    if (pts && pts.length >= 3) {
+      let minX = Infinity
+      let minY = Infinity
+      let maxX = -Infinity
+      let maxY = -Infinity
+      for (const p of pts) {
+        if (p.x < minX) minX = p.x
+        if (p.x > maxX) maxX = p.x
+        if (p.y < minY) minY = p.y
+        if (p.y > maxY) maxY = p.y
+      }
+      const poly = pts.map((p) => [p.x, p.y] as [number, number])
+      const picked = new Set<string>()
+      for (const s of this.doc.strokes) {
+        if (s.points.length === 0) continue
+        let allIn = true
+        for (const pt of s.points) {
+          // A point outside the lasso's bbox is outside the polygon — bail
+          // before the more expensive ray-cast.
+          if (
+            pt.x < minX ||
+            pt.x > maxX ||
+            pt.y < minY ||
+            pt.y > maxY ||
+            !pointInPolygon(poly, pt.x, pt.y)
+          ) {
+            allIn = false
+            break
+          }
+        }
+        if (allIn) picked.add(s.id)
+      }
+      if (picked.size > 0) {
+        this.selection = picked
+        this.lassoPath = pts
+      }
+    }
+
+    this.emit()
+    this.requestRender()
+  }
+
+  // ---------------------------------------------------------------------
   // Wheel zoom / vertical pan
   // ---------------------------------------------------------------------
 
@@ -1266,6 +1439,7 @@ export class WhiteboardEngine {
       const screen = this.screenOf(e.clientX, e.clientY)
       const factor = Math.exp(-e.deltaY * 0.01)
       this.zoomTo(this.zoom * factor, screen.y, screen.x)
+      if (this.selection.size > 0) this.emit() // keep the menu glued during zoom
       return
     }
     // Plain wheel: in vertical paging it scrolls between pages (with a debounced
@@ -1278,6 +1452,7 @@ export class WhiteboardEngine {
       this.panY = clampPan(this.panY - e.deltaY, PAGE_H * this.zoom, this.cssH)
     }
     this.requestRender()
+    if (this.selection.size > 0) this.emit() // keep the menu glued during pan
   }
 
   /** Debounced settle after wheel paging stops (vertical mode): snap to the
@@ -1382,6 +1557,15 @@ export class WhiteboardEngine {
     } else if (mod && e.key.toLowerCase() === 'd') {
       e.preventDefault()
       this.duplicateSelected()
+    } else if (mod && e.key.toLowerCase() === 'c' && this.selection.size > 0) {
+      e.preventDefault()
+      this.copySelected()
+    } else if (mod && e.key.toLowerCase() === 'x' && this.selection.size > 0) {
+      e.preventDefault()
+      this.cutSelected()
+    } else if (mod && e.key.toLowerCase() === 'v' && this.clipboard.length > 0) {
+      e.preventDefault()
+      this.paste()
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && this.selection.size > 0) {
       e.preventDefault()
       this.deleteSelected()
@@ -1407,6 +1591,33 @@ export class WhiteboardEngine {
     for (const l of this.listeners) l()
   }
 
+  /** Toggle the in-flight-interaction flag (hides the floating selection menu
+   *  until a gesture settles). Emits only on change, so it's cheap per gesture. */
+  private setInteracting(v: boolean): void {
+    if (this.interacting === v) return
+    this.interacting = v
+    this.emit()
+  }
+
+  /** Screen-space anchor (CSS px, container-relative) for the floating selection
+   *  menu: the selection's horizontal center and top/bottom on the current page,
+   *  or null when nothing is selected. */
+  private selectionMenuAnchor(): { x: number; top: number; bottom: number } | null {
+    if (this.selection.size === 0) return null
+    const selected = this.doc.strokes.filter((s) => this.selection.has(s.id))
+    const b = unionBounds(selected)
+    if (!b) return null
+    const p = this.currentPage()
+    const ox = this.pageScreenLeft(p) - this.pageStorageLeft(p) * this.zoom
+    const oy = this.pageScreenTop(p)
+    const cx = (b.minX + b.maxX) / 2
+    return {
+      x: ox + cx * this.zoom,
+      top: oy + b.minY * this.zoom,
+      bottom: oy + b.maxY * this.zoom,
+    }
+  }
+
   getState(): EngineState {
     return {
       tool: this.tool,
@@ -1415,6 +1626,9 @@ export class WhiteboardEngine {
       canRedo: this.history.canRedo(),
       isEmpty: this.doc.strokes.length === 0,
       hasSelection: this.selection.size > 0,
+      hasClipboard: this.clipboard.length > 0,
+      // Hidden mid-gesture so it doesn't float around during a drag/pan/zoom.
+      selectionMenu: this.interacting ? null : this.selectionMenuAnchor(),
       pull: this.pullProgress,
       page: this.currentPage(),
       pageCount: this.numPages(),
@@ -1425,7 +1639,12 @@ export class WhiteboardEngine {
   setTool(tool: ToolId): void {
     if (this.tool === tool) return
     this.tool = tool
-    if (tool !== 'select') this.selection.clear()
+    // Switching tools is a clean slate: drop any selection + lasso outline + any
+    // in-progress marquee/loop so a stale overlay never lingers under a new tool.
+    this.selection.clear()
+    this.lassoPts = null
+    this.lassoPath = null
+    this.marquee = null
     if (tool !== 'eraser') this.hideEraserCursor()
     this.emit()
     this.requestRender()
@@ -1494,6 +1713,7 @@ export class WhiteboardEngine {
     if (this.selection.size === 0) return
     this.doc.strokes = this.doc.strokes.filter((s) => !this.selection.has(s.id))
     this.selection.clear()
+    this.lassoPath = null
     this.commit()
   }
 
@@ -1510,6 +1730,45 @@ export class WhiteboardEngine {
     }
     this.doc.strokes.push(...copies)
     this.selection = new Set(copies.map((c) => c.id))
+    // Offset the lasso outline with the copies so it frames them, not the source.
+    if (this.lassoPath) this.lassoPath = this.lassoPath.map((p) => ({ x: p.x + 16, y: p.y + 16 }))
+    this.commit()
+  }
+
+  /** Copy the current selection into the app-local clipboard (deep copy, so a
+   *  later move/delete of the originals doesn't disturb the pasted result). */
+  copySelected(): void {
+    if (this.selection.size === 0) return
+    this.clipboard = this.doc.strokes
+      .filter((s) => this.selection.has(s.id))
+      .map((s) => ({ ...s, points: s.points.map((p) => ({ ...p })) }))
+    this.clipLasso = this.lassoPath ? this.lassoPath.map((p) => ({ ...p })) : null
+    this.pasteShift = 0
+    this.emit()
+  }
+
+  /** Cut = copy, then delete the selection (a single undoable step). */
+  cutSelected(): void {
+    if (this.selection.size === 0) return
+    this.copySelected()
+    this.deleteSelected()
+  }
+
+  /** Paste the clipboard offset from the source and select the copies, so they
+   *  can be dragged into place. Consecutive pastes cascade (+16 each) instead of
+   *  landing exactly on top of one another. */
+  paste(): void {
+    if (this.clipboard.length === 0) return
+    this.pasteShift += 16
+    const d = this.pasteShift
+    const copies: Stroke[] = this.clipboard.map((s) => ({
+      ...s,
+      id: uid(),
+      points: s.points.map((p) => ({ x: p.x + d, y: p.y + d, p: p.p })),
+    }))
+    this.doc.strokes.push(...copies)
+    this.selection = new Set(copies.map((c) => c.id))
+    this.lassoPath = this.clipLasso ? this.clipLasso.map((p) => ({ x: p.x + d, y: p.y + d })) : null
     this.commit()
   }
 
@@ -1527,6 +1786,7 @@ export class WhiteboardEngine {
     })
     if (this.doc.strokes.length === before) return
     this.selection.clear()
+    this.lassoPath = null
     this.pathCache.clear()
     this.commit()
   }
@@ -1553,6 +1813,7 @@ export class WhiteboardEngine {
     this.page = clamp(p, 0, this.numPages() - 1)
     this.scroll = this.restScroll(this.page)
     this.selection.clear()
+    this.lassoPath = null
     this.pathCache.clear() // shifted coordinates invalidate cached paths
     this.commit()
   }
@@ -1577,6 +1838,20 @@ export class WhiteboardEngine {
       return cx >= left && cx < right
     })
     return exportPng(onPage, opts)
+  }
+
+  /**
+   * PNG for Check Work. A lasso (or marquee) selection acts as a boundary: when
+   * strokes are selected, only those are captured; otherwise it falls back to
+   * the page in view (same scoping as a normal export). Either way `exportPng`
+   * crops tightly to the ink, so the model sees exactly the lasso'd work.
+   */
+  toCheckImage(opts: ExportOptions): Promise<Blob | null> {
+    if (this.selection.size > 0) {
+      const sel = this.doc.strokes.filter((s) => this.selection.has(s.id) && s.points.length > 0)
+      if (sel.length > 0) return exportPng(sel, opts)
+    }
+    return this.toImage(opts)
   }
 
   destroy(): void {

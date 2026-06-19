@@ -53,7 +53,7 @@ export type WhiteboardDoc = {
 
 export const emptyDoc = (): WhiteboardDoc => ({ version: 1, strokes: [], pageCount: 1 })
 
-export type ToolId = 'select' | 'draw' | 'eraser'
+export type ToolId = 'select' | 'draw' | 'eraser' | 'lasso'
 
 /** Page-space camera. screen = page * z + {x,y}. */
 export type Camera = { x: number; y: number; z: number }
@@ -68,6 +68,15 @@ export type EngineState = {
   canRedo: boolean
   isEmpty: boolean
   hasSelection: boolean
+  /** True when the app-local clipboard holds strokes that can be pasted. */
+  hasClipboard: boolean
+  /**
+   * Screen-space anchor for the floating selection menu (CSS px, container-
+   * relative): the horizontal center plus the top/bottom of the current
+   * selection's bounds, so React can place the menu above or below it. null
+   * when nothing is selected or a pointer interaction is in flight.
+   */
+  selectionMenu: { x: number; top: number; bottom: number } | null
   /** 0 normally; 0..1 while pulling past the last page to create a new one. */
   pull: number
   /** Index of the page currently in view. */
