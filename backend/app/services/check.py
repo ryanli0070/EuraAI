@@ -10,7 +10,12 @@ from app.llm.client import get_client
 from app.llm.guardrail import hint_leaks_answer
 from app.llm.image import preprocess
 from app.llm.models import TutorOutput
-from app.llm.prompts import FEW_SHOTS, STRICTER_RETRY_INSTRUCTION, SYSTEM_PROMPT
+from app.llm.prompts import (
+    FEW_SHOTS,
+    SCOPED_SELECTION_INSTRUCTION,
+    STRICTER_RETRY_INSTRUCTION,
+    SYSTEM_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +43,20 @@ def _build_text_messages(latex: str, extra_system: str | None = None) -> list[di
     return messages
 
 
-def _build_vision_messages(image_b64: str) -> list[dict]:
+def _build_vision_messages(image_b64: str, extra_system: str | None = None) -> list[dict]:
     """System prompt + text few-shots + the image as the final user turn.
     Few-shots stay text-only (we don't have labeled handwriting images); their
-    job is to calibrate the output shape and the quoted-anchor hint style."""
+    job is to calibrate the output shape and the quoted-anchor hint style.
+
+    `extra_system` (e.g. the scoped-selection instruction) rides along as a
+    *trailing* system message so it never perturbs the cacheable system+few-shot
+    prefix — same pattern as `_build_text_messages`."""
     messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
     for user, assistant in FEW_SHOTS:
         messages.append({"role": "user", "content": user})
         messages.append({"role": "assistant", "content": json.dumps(assistant)})
+    if extra_system:
+        messages.append({"role": "system", "content": extra_system})
     messages.append({
         "role": "user",
         "content": [
@@ -71,17 +82,20 @@ def _call_text_tutor(latex: str, stricter: bool) -> TutorOutput:
     return parsed
 
 
-def check_image(image_bytes: bytes, escalate: bool = False) -> TutorOutput:
+def check_image(image_bytes: bytes, escalate: bool = False, scoped: bool = False) -> TutorOutput:
     """Single-call path: take the whiteboard PNG, the model transcribes + analyzes + hints.
 
     `escalate=True` re-runs the same call at the higher ESCALATED reasoning effort
-    — used by the reactive retry when the first pass comes back low-confidence."""
+    — used by the reactive retry when the first pass comes back low-confidence.
+    `scoped=True` means the student lassoed a region and wants only that checked,
+    so the model is told to check exactly what's shown and not ask for more."""
     png = preprocess(image_bytes)
     b64 = base64.b64encode(png).decode("ascii")
     effort = config.REASONING_EFFORT_ESCALATED if escalate else config.REASONING_EFFORT_ANALYSIS
+    extra = SCOPED_SELECTION_INSTRUCTION if scoped else None
     completion = get_client().beta.chat.completions.parse(
         model=config.OPENAI_MODEL,
-        messages=_build_vision_messages(b64),
+        messages=_build_vision_messages(b64, extra_system=extra),
         response_format=TutorOutput,
         **config.model_call_kwargs(0.2, cache_key=_CHECK_CACHE_KEY, reasoning_effort=effort),
     )

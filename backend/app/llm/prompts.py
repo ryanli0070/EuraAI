@@ -275,6 +275,22 @@ RULES FOR INCORRECT WORK:
 - Do not use the phrase "should be", "the answer is", "equals N", or "the right value"."""
 
 
+# Trailing system message appended ONLY when the student lassoed a region and
+# asked to check just that selection. It overrides the single-step
+# "ask a clarifying question" fallback in SYSTEM_PROMPT: a deliberate selection
+# is the complete input, so the model checks exactly what's shown instead of
+# asking whether there's more.
+SCOPED_SELECTION_INSTRUCTION = (
+    "SCOPED SELECTION: The student lassoed a specific region of their work and "
+    "wants ONLY that selection checked. Treat what is shown as the complete, "
+    "intended input. Do NOT ask whether this is everything, do NOT ask for the "
+    "rest of the problem, and do NOT request more context. This overrides the "
+    "single-step clarifying-question rule: if only one step is shown, check that "
+    "step's own arithmetic/algebra; if it is a valid statement with no error, set "
+    "all_correct=true."
+)
+
+
 STRICTER_RETRY_INSTRUCTION = (
     "Your previous response leaked the answer. Rewrite the hint as a "
     "pure question about the student's reasoning. Do NOT mention any "

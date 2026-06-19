@@ -1,7 +1,7 @@
 import hashlib
 import logging
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 
 from app import config
 from app.auth import get_current_user
@@ -23,6 +23,7 @@ router = APIRouter()
 async def check_work(
     request: Request,
     file: UploadFile = File(...),
+    scoped: bool = Form(False),
     _user_id: str = Depends(get_current_user),
 ) -> CheckResponse:
     image_hash = ""
@@ -31,7 +32,9 @@ async def check_work(
         image_hash = hashlib.sha256(image_bytes).hexdigest()
 
         # One vision-model call does OCR + step analysis + Socratic hint.
-        analysis = check_service.check_image(image_bytes)
+        # `scoped` means the image is a lasso selection — check exactly what's
+        # shown, don't ask whether there's more.
+        analysis = check_service.check_image(image_bytes, scoped=scoped)
 
         # Reactive escalation: the cheap pass came back unsure about its own
         # read/verdict. Re-run once at higher reasoning effort before any of the
@@ -42,7 +45,7 @@ async def check_work(
                 "low confidence %.2f < %.2f; escalating reasoning effort",
                 analysis.confidence, config.ESCALATION_CONFIDENCE_THRESHOLD,
             )
-            escalated = check_service.check_image(image_bytes, escalate=True)
+            escalated = check_service.check_image(image_bytes, escalate=True, scoped=scoped)
             if escalated.steps:
                 analysis = escalated
 

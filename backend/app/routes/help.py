@@ -1,7 +1,7 @@
 import hashlib
 import logging
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 
 from app.auth import get_current_user
 from app.errors import FileTooLargeError
@@ -22,6 +22,7 @@ router = APIRouter()
 async def help_work(
     request: Request,
     file: UploadFile = File(...),
+    scoped: bool = Form(False),
     _user_id: str = Depends(get_current_user),
 ) -> HelpResponse:
     image_hash = ""
@@ -29,7 +30,8 @@ async def help_work(
         image_bytes = await read_with_limit(file)
         image_hash = hashlib.sha256(image_bytes).hexdigest()
 
-        analysis = help_service.help_image(image_bytes)
+        # `scoped` means a lasso selection — explain only the shown work.
+        analysis = help_service.help_image(image_bytes, scoped=scoped)
         steps_latex = [s.latex for s in analysis.steps]
         latex = "\n".join(steps_latex)
 

@@ -8,17 +8,22 @@ from app import config
 from app.llm.client import get_client
 from app.llm.image import preprocess
 from app.llm.models import HelpOutput
-from app.llm.prompts import HELP_FEW_SHOTS, HELP_SYSTEM_PROMPT
+from app.llm.prompts import HELP_FEW_SHOTS, HELP_SYSTEM_PROMPT, SCOPED_SELECTION_INSTRUCTION
 
 
-def _build_help_messages(image_b64: str) -> list[dict]:
+def _build_help_messages(image_b64: str, extra_system: str | None = None) -> list[dict]:
     """System prompt + the same labeled few-shots hint mode uses (projected onto
     HelpOutput's `explanation` field) + the image as the final user turn. Sharing
-    the few-shots keeps help mode's correctness verdicts aligned with hint mode's."""
+    the few-shots keeps help mode's correctness verdicts aligned with hint mode's.
+
+    `extra_system` (e.g. the scoped-selection instruction) is a trailing system
+    message, kept off the cacheable system+few-shot prefix."""
     messages: list[dict] = [{"role": "system", "content": HELP_SYSTEM_PROMPT}]
     for user, assistant in HELP_FEW_SHOTS:
         messages.append({"role": "user", "content": user})
         messages.append({"role": "assistant", "content": json.dumps(assistant)})
+    if extra_system:
+        messages.append({"role": "system", "content": extra_system})
     messages.append({
         "role": "user",
         "content": [
@@ -29,13 +34,17 @@ def _build_help_messages(image_b64: str) -> list[dict]:
     return messages
 
 
-def help_image(image_bytes: bytes) -> HelpOutput:
-    """Explicit help path: the model identifies the wrong step and explains the error directly."""
+def help_image(image_bytes: bytes, scoped: bool = False) -> HelpOutput:
+    """Explicit help path: the model identifies the wrong step and explains the error directly.
+
+    `scoped=True` (a lasso selection) tells the model to explain only the shown
+    work and not ask for more context."""
     png = preprocess(image_bytes)
     b64 = base64.b64encode(png).decode("ascii")
+    extra = SCOPED_SELECTION_INSTRUCTION if scoped else None
     completion = get_client().beta.chat.completions.parse(
         model=config.OPENAI_MODEL,
-        messages=_build_help_messages(b64),
+        messages=_build_help_messages(b64, extra_system=extra),
         response_format=HelpOutput,
         # Help has its own static prefix (HELP_SYSTEM_PROMPT + HELP_FEW_SHOTS,
         # ~2k tokens), distinct from Check's — give it its own cache key. Same

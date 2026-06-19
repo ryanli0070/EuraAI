@@ -202,6 +202,9 @@ export function Whiteboard({
     if (!blob) return null
     const formData = new FormData()
     formData.append('file', blob, 'capture.png')
+    // Tell the backend this is a deliberate lasso selection so it checks exactly
+    // what's shown instead of asking whether there's more work.
+    if (engine.getState().hasSelection) formData.append('scoped', 'true')
     return formData
   }, [])
 
