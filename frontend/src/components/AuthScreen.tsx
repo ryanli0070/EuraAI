@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Keyboard } from '@capacitor/keyboard'
-import { resetPassword, signIn, signUp } from '../lib/auth'
+import { resendSignupOtp, resetPassword, signIn, signUp, verifyEmailOtp } from '../lib/auth'
 import { hapticTap, isNative } from '../lib/native'
 
-type Mode = 'signin' | 'signup' | 'reset'
+type Mode = 'signin' | 'signup' | 'reset' | 'verify'
 
 const STYLES = `
 .auth-screen{
@@ -98,6 +98,7 @@ export function AuthScreen() {
   const [mode, setMode] = useState<Mode>('signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -144,7 +145,14 @@ export function AuthScreen() {
       } else if (mode === 'signup') {
         const err = await signUp(email.trim(), password)
         if (err) setError(err)
-        else setNotice('Check your email to confirm your account.')
+        else {
+          setMode('verify')
+          setNotice('We emailed you a 6-digit code. Enter it below to finish.')
+        }
+      } else if (mode === 'verify') {
+        const err = await verifyEmailOtp(email.trim(), code.trim())
+        if (err) setError(err)
+        // success: useSession will update; component unmounts.
       } else {
         const err = await resetPassword(email.trim())
         if (err) setError(err)
@@ -155,10 +163,29 @@ export function AuthScreen() {
     }
   }
 
-  const title = mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Reset password'
+  const onResend = async () => {
+    if (submitting) return
+    void hapticTap()
+    reset()
+    setSubmitting(true)
+    try {
+      const err = await resendSignupOtp(email.trim())
+      if (err) setError(err)
+      else setNotice('Sent a new code — check your email.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const title =
+    mode === 'signin' ? 'Sign in'
+    : mode === 'signup' ? 'Create account'
+    : mode === 'verify' ? 'Check your email'
+    : 'Reset password'
   const submitLabel =
     mode === 'signin' ? (submitting ? 'Signing in…' : 'Sign in')
     : mode === 'signup' ? (submitting ? 'Creating…' : 'Create account')
+    : mode === 'verify' ? (submitting ? 'Verifying…' : 'Verify')
     : (submitting ? 'Sending…' : 'Send reset email')
 
   return (
@@ -177,6 +204,7 @@ export function AuthScreen() {
         <p className="sub">
           {mode === 'signin' && 'Welcome back.'}
           {mode === 'signup' && 'A canvas, a calculator, and a tutor.'}
+          {mode === 'verify' && `Enter the 6-digit code we sent to ${email}.`}
           {mode === 'reset' && "We'll email you a link to set a new password."}
         </p>
 
@@ -184,17 +212,19 @@ export function AuthScreen() {
         {notice && <div className="notice">{notice}</div>}
 
         <form onSubmit={onSubmit}>
-          <label>
-            Email
-            <input
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          {mode !== 'reset' && (
+          {mode !== 'verify' && (
+            <label>
+              Email
+              <input
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+          )}
+          {mode !== 'reset' && mode !== 'verify' && (
             <label>
               Password
               <input
@@ -204,6 +234,22 @@ export function AuthScreen() {
                 minLength={6}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+          )}
+          {mode === 'verify' && (
+            <label>
+              Confirmation code
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]*"
+                maxLength={6}
+                required
+                placeholder="123456"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
               />
             </label>
           )}
@@ -226,6 +272,11 @@ export function AuthScreen() {
             <>
               <button type="button" onClick={() => switchMode('signup')}>Create an account</button>
               <button type="button" onClick={() => switchMode('reset')}>Forgot password?</button>
+            </>
+          ) : mode === 'verify' ? (
+            <>
+              <button type="button" onClick={onResend} disabled={submitting}>Resend code</button>
+              <button type="button" onClick={() => switchMode('signin')}>Back to sign in</button>
             </>
           ) : (
             <button type="button" onClick={() => switchMode('signin')}>Back to sign in</button>

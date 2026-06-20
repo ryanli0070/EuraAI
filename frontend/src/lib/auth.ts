@@ -49,6 +49,23 @@ export async function signUp(email: string, password: string): Promise<string | 
   return error?.message ?? null
 }
 
+/**
+ * Confirm a new account with the 6-digit code Supabase emailed, instead of a
+ * confirmation link. On success the SDK stores the session and `useSession()`
+ * flips to logged-in, so the caller just unmounts. Returns an error message on
+ * failure, or null on success.
+ */
+export async function verifyEmailOtp(email: string, token: string): Promise<string | null> {
+  const { error } = await supabase.auth.verifyOtp({ email, token, type: 'signup' })
+  return error?.message ?? null
+}
+
+/** Re-send the signup confirmation code to the given email. */
+export async function resendSignupOtp(email: string): Promise<string | null> {
+  const { error } = await supabase.auth.resend({ type: 'signup', email })
+  return error?.message ?? null
+}
+
 export async function signOut(): Promise<void> {
   await supabase.auth.signOut()
 }
