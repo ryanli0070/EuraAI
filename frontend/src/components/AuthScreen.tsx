@@ -147,7 +147,7 @@ export function AuthScreen() {
         if (err) setError(err)
         else {
           setMode('verify')
-          setNotice('We emailed you a 6-digit code. Enter it below to finish.')
+          setNotice('We emailed you an 8-digit code. Enter it below to finish.')
         }
       } else if (mode === 'verify') {
         const err = await verifyEmailOtp(email.trim(), code.trim())
@@ -204,7 +204,7 @@ export function AuthScreen() {
         <p className="sub">
           {mode === 'signin' && 'Welcome back.'}
           {mode === 'signup' && 'A canvas, a calculator, and a tutor.'}
-          {mode === 'verify' && `Enter the 6-digit code we sent to ${email}.`}
+          {mode === 'verify' && `Enter the 8-digit code we sent to ${email}.`}
           {mode === 'reset' && "We'll email you a link to set a new password."}
         </p>
 
@@ -245,9 +245,9 @@ export function AuthScreen() {
                 inputMode="numeric"
                 autoComplete="one-time-code"
                 pattern="[0-9]*"
-                maxLength={6}
+                maxLength={8}
                 required
-                placeholder="123456"
+                placeholder="12345678"
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
               />
