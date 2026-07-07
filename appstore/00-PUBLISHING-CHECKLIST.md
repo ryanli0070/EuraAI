@@ -1,6 +1,6 @@
 # Publishing Eura on the Apple App Store — Requirements Checklist
 
-_Last updated: June 11, 2026. This maps Apple's requirements to Eura's current state. The app is **Eura**; **Orion** is the in-app AI tutor. Items marked ✅ are already done in your repo; ❌ are still open._
+_Last updated: June 11, 2026. This maps Apple's requirements to Eura's current state (per `HANDOFF.md`). The app is **Eura**; **Orion** is the in-app AI tutor. Items marked ✅ are already done in your repo; ❌ are still open._
 
 This app ships as a **Capacitor-wrapped iOS app** (iPad-first), so it follows the **Apple App Store** process. There is no Google Play involvement unless you later add Android.
 
