@@ -24,8 +24,10 @@ import {
 } from 'lucide-react'
 import { deleteAccount, useSession } from '../lib/auth'
 import {
+  getAiConsent,
   getScrollVertical,
   getShowGrid,
+  setAiConsent,
   setScrollVertical,
   setShowGrid,
 } from '../lib/settings'
@@ -142,6 +144,7 @@ function ProfileScreen({ user }: { user: User | null }) {
 function SettingsScreen() {
   const [grid, setGrid] = useState(getShowGrid)
   const [verticalScroll, setVerticalScroll] = useState(getScrollVertical)
+  const [aiAllowed, setAiAllowed] = useState(() => getAiConsent() === true)
 
   const updateGrid = (value: boolean) => {
     setGrid(value)
@@ -151,6 +154,11 @@ function SettingsScreen() {
   const updateVerticalScroll = (value: boolean) => {
     setVerticalScroll(value)
     setScrollVertical(value)
+  }
+
+  const updateAiAllowed = (value: boolean) => {
+    setAiAllowed(value)
+    setAiConsent(value)
   }
 
   const handleDeleteAccount = async () => {
@@ -176,6 +184,18 @@ function SettingsScreen() {
             sub="Swipe up to move between pages and add new ones, instead of sideways"
             value={verticalScroll}
             onChange={updateVerticalScroll}
+          />
+        </div>
+      </section>
+
+      <section className="acct-section">
+        <div className="label">Privacy</div>
+        <div className="acct-card">
+          <ToggleRow
+            label="AI feedback (OpenAI)"
+            sub="Send pictures of your canvas work, their transcribed text, and your chat messages to OpenAI, our AI provider, to power Check Work, hints, and Orion chat. Nothing is sent while this is off."
+            value={aiAllowed}
+            onChange={updateAiAllowed}
           />
         </div>
       </section>

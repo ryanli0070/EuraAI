@@ -9,6 +9,7 @@
 
 const GRID_KEY = 'euraai.settings.showGrid'
 const SCROLL_VERTICAL_KEY = 'euraai.settings.scrollVertical'
+const AI_CONSENT_KEY = 'euraai.settings.aiConsent'
 
 type Listener = () => void
 const listeners = new Set<Listener>()
@@ -47,6 +48,31 @@ export function getScrollVertical(): boolean {
 export function setScrollVertical(value: boolean): void {
   try {
     localStorage.setItem(SCROLL_VERTICAL_KEY, value ? '1' : '0')
+  } catch {
+    // Ignore quota / availability errors — the setting just won't persist.
+  }
+  for (const l of listeners) l()
+}
+
+/**
+ * Whether the user has agreed to send their work to OpenAI (our AI provider)
+ * for feedback. Tri-state: `null` means they haven't been asked yet. Every AI
+ * feature (Check Work, Hint/Help, Orion chat) must check this before sending
+ * anything off-device — nothing is transmitted until the user taps Allow in
+ * the disclosure dialog (App Store guideline 5.1.2(i)).
+ */
+export function getAiConsent(): boolean | null {
+  try {
+    const v = localStorage.getItem(AI_CONSENT_KEY)
+    return v === null ? null : v === '1'
+  } catch {
+    return null
+  }
+}
+
+export function setAiConsent(value: boolean): void {
+  try {
+    localStorage.setItem(AI_CONSENT_KEY, value ? '1' : '0')
   } catch {
     // Ignore quota / availability errors — the setting just won't persist.
   }

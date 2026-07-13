@@ -22,8 +22,9 @@ import {
   setThumbnail,
 } from '../lib/canvasStore'
 import { apiFetch } from '../lib/api'
-import { getScrollVertical, getShowGrid, subscribeSettings } from '../lib/settings'
+import { getAiConsent, getScrollVertical, getShowGrid, setAiConsent, subscribeSettings } from '../lib/settings'
 import { OrionAssistant } from './OrionAssistant'
+import { AiConsentDialog } from './AiConsentDialog'
 
 type CheckStatus = 'idle' | 'checking' | 'ok' | 'all_correct' | 'no_math' | 'error'
 
@@ -113,6 +114,18 @@ export function Whiteboard({
   // The Orion assistant box (toolbar pill ⇄ glass panel). Lifted here so Check
   // Work's Hint/Help can pop it open to show their result.
   const [assistantOpen, setAssistantOpen] = useState(false)
+  // Non-null while the AI-disclosure dialog is up; holds the action to run if
+  // the user taps Allow. Every path that sends work to the AI backend goes
+  // through withAiConsent, so nothing leaves the device without permission.
+  const [pendingConsent, setPendingConsent] = useState<(() => void) | null>(null)
+
+  const withAiConsent = useCallback((action: () => void) => {
+    if (getAiConsent() === true) {
+      action()
+      return
+    }
+    setPendingConsent(() => action)
+  }, [])
 
   const handleMount = useCallback((engine: WhiteboardEngine) => {
     engineRef.current = engine
@@ -353,7 +366,7 @@ export function Whiteboard({
           messages,
           input,
           setInput,
-          onSend: handleSend,
+          onSend: () => withAiConsent(handleSend),
           onClear: clearChat,
           sending,
           checking: checkStatus === 'checking',
@@ -400,7 +413,7 @@ export function Whiteboard({
         {showCheckMenu && (
           <div className="flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl">
             <button
-              onClick={() => { setShowCheckMenu(false); handleHint() }}
+              onClick={() => { setShowCheckMenu(false); withAiConsent(handleHint) }}
               className="flex flex-col items-start px-5 py-3 text-left transition-colors hover:bg-neutral-50 active:bg-neutral-100"
             >
               <span className="text-sm font-semibold text-neutral-800">Hint</span>
@@ -408,7 +421,7 @@ export function Whiteboard({
             </button>
             <div className="h-px bg-neutral-100" />
             <button
-              onClick={() => { setShowCheckMenu(false); handleHelp() }}
+              onClick={() => { setShowCheckMenu(false); withAiConsent(handleHelp) }}
               className="flex flex-col items-start px-5 py-3 text-left transition-colors hover:bg-neutral-50 active:bg-neutral-100"
             >
               <span className="text-sm font-semibold text-neutral-800">Help</span>
@@ -425,6 +438,20 @@ export function Whiteboard({
           {checkStatus === 'checking' ? 'Checking…' : 'Check Work'}
         </button>
       </div>
+
+      {pendingConsent && (
+        <AiConsentDialog
+          onAllow={() => {
+            setAiConsent(true)
+            setPendingConsent(null)
+            pendingConsent()
+          }}
+          onDecline={() => {
+            setAiConsent(false)
+            setPendingConsent(null)
+          }}
+        />
+      )}
     </div>
   )
 }
