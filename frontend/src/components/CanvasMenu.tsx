@@ -963,7 +963,7 @@ function Sidebar({
   const items: { label: string; icon: ComponentType; onClick?: () => void; danger?: boolean }[] = [
     { label: 'Profile', icon: ProfileIcon, onClick: () => onOpenScreen('profile') },
     { label: 'Settings', icon: SettingsIcon, onClick: () => onOpenScreen('settings') },
-    { label: 'Payments', icon: PaymentsIcon, onClick: () => onOpenScreen('payments') },
+    { label: 'Plan', icon: PaymentsIcon, onClick: () => onOpenScreen('payments') },
     { label: 'Help & Support', icon: HelpIcon, onClick: () => onOpenScreen('help') },
     { label: 'Sign Out', icon: SignOutIcon, onClick: onSignOut },
   ]
