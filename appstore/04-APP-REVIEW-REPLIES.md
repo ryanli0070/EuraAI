@@ -21,29 +21,33 @@ reply required — just resubmit with the new build. If you want to add a note:
 
 Paste verbatim into the Resolution Center:
 
-> Thank you for the questions. Eura is currently a completely free app with no paid
-> content, subscriptions, consumables, or unlockable features of any kind.
+> Thank you for the questions. Eura does not currently include any paid content,
+> subscriptions, consumables, or unlockable features — the app is free for all users at
+> this time. We may introduce paid features in the future, and any such purchases would be
+> offered exclusively through Apple In-App Purchase.
 >
 > 1. Who are the users that will use the paid content in the app?
-> There is no paid content. Eura is a free math-tutoring app for students; every feature
-> is available to all users at no cost.
+> There is no paid content in the app at this time. Eura is currently a free math-tutoring
+> app for students, with every feature available to all users at no cost.
 >
 > 2. Where can users purchase the content that can be accessed in the app?
-> Nowhere. There is no content to purchase, inside the app or externally.
+> There is nowhere to purchase content today. The app does not currently offer or link to
+> any paid content, inside the app or externally.
 >
 > 3. What specific types of previously purchased content can a user access in the app?
-> None. The app has no concept of purchased content and no restore-purchase flow.
+> None at this time. The app currently has no concept of purchased content and no
+> restore-purchase flow.
 >
 > 4. What paid content, subscriptions, or features are unlocked within the app that do
 > not use In-App Purchase?
-> None. There are no paid tiers, subscriptions, or unlockable features through any payment
-> method. The "Plan" screen in the app is purely informational and states that the app is
-> free with nothing to pay and no card on file.
+> None. The app currently has no paid tiers, subscriptions, or unlockable features through
+> any payment method. The "Plan" screen is purely informational and shows the user is on
+> the free plan (nothing to pay, no card on file). If we add paid features in the future,
+> they will be sold exclusively through Apple In-App Purchase.
 >
 > 5. Do users have to pay a fee to create an account?
-> No. Account creation and all app usage are completely free; no card or payment
-> information is ever collected. Should we ever introduce paid features, they will be sold
-> exclusively through Apple In-App Purchase.
+> No. Account creation and all app usage are currently free, and no card or payment
+> information is collected.
 
 ---
 
