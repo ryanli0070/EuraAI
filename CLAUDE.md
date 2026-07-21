@@ -9,6 +9,17 @@ Runner; Supabase for auth/Postgres/Storage. See `HANDOFF.md` for architecture.
   into the Capacitor iOS shell with `npx cap sync ios`)
 - Typecheck/lint: `cd frontend && npx tsc --noEmit && npx eslint src/`
 
+## Testing
+
+- Run: `cd frontend && npm test` (Vitest, jsdom; watch mode: `npm run test:watch`)
+- Tests are colocated in `frontend/src/**/*.test.ts(x)`; see `frontend/TESTING.md`
+- 100% test coverage is the goal — tests make vibe coding safe
+- When writing new functions, write a corresponding test
+- When fixing a bug, write a regression test
+- When adding error handling, write a test that triggers the error
+- When adding a conditional (if/else, switch), write tests for BOTH paths
+- Never commit code that makes existing tests fail
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
