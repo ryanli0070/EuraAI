@@ -153,6 +153,11 @@ export function AuthScreen() {
 
   const switchMode = (next: Mode) => {
     reset()
+    // Modes share the password/code state — never carry a value typed in one
+    // mode into another (e.g. a candidate new password from the reset flow
+    // must not pre-fill the sign-in password field).
+    setPassword('')
+    setCode('')
     setMode(next)
   }
 
