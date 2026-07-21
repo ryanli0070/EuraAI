@@ -31,3 +31,4 @@ skills-lock.json
 # Local DB (Phase 6 debug log)
 *.sqlite
 *.db
+.gstack/
