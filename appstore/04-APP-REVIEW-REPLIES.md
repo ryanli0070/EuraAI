@@ -32,8 +32,13 @@ Paste into the Resolution Center when resubmitting:
 3. Open `frontend/ios/App/App.xcworkspace` in Xcode → Product → Archive → upload.
 4. Select the new build in App Store Connect, paste the reply above, submit.
 
-*(Supabase side is already done: anonymous sign-ins enabled and the email-change OTP
-template applied via the Management API on 2026-07-20 — nothing to configure there.)*
+*(Supabase side is already done: anonymous sign-ins enabled and the email-change +
+recovery OTP templates applied via the Management API on 2026-07-20; `site_url` fixed
+from `http://localhost:3000` to `https://euralearn.com` — nothing to configure there.)*
+
+Build 4 also fixes **password reset** (not review-related): the emailed reset link
+pointed at localhost; reset now uses an 8-digit emailed code + in-app "new password"
+step, matching the signup flow.
 
 ---
 

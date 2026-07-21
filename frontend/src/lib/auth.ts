@@ -113,8 +113,30 @@ export async function resendGuestUpgradeOtp(email: string): Promise<string | nul
   return error?.message ?? null
 }
 
+/**
+ * Step 1 of password reset: email the user an 8-digit recovery code (the
+ * recovery template shows {{ .Token }}, not a link). Succeeds silently for
+ * unknown emails, so callers can't enumerate accounts. Calling it again
+ * re-sends the code.
+ */
 export async function resetPassword(email: string): Promise<string | null> {
   const { error } = await supabase.auth.resetPasswordForEmail(email)
+  return error?.message ?? null
+}
+
+/**
+ * Step 2: confirm the emailed recovery code. On success Supabase establishes
+ * a session (the user is signed in), so the caller must immediately follow up
+ * with `updatePassword` to complete the reset.
+ */
+export async function verifyRecoveryOtp(email: string, token: string): Promise<string | null> {
+  const { error } = await supabase.auth.verifyOtp({ email, token, type: 'recovery' })
+  return error?.message ?? null
+}
+
+/** Step 3: set the new password for the now-signed-in user. */
+export async function updatePassword(password: string): Promise<string | null> {
+  const { error } = await supabase.auth.updateUser({ password })
   return error?.message ?? null
 }
 

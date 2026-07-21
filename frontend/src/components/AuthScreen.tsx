@@ -1,9 +1,18 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Keyboard } from '@capacitor/keyboard'
-import { resendSignupOtp, resetPassword, signIn, signInAsGuest, signUp, verifyEmailOtp } from '../lib/auth'
+import {
+  resendSignupOtp,
+  resetPassword,
+  signIn,
+  signInAsGuest,
+  signUp,
+  updatePassword,
+  verifyEmailOtp,
+  verifyRecoveryOtp,
+} from '../lib/auth'
 import { hapticTap, isNative } from '../lib/native'
 
-type Mode = 'signin' | 'signup' | 'reset' | 'verify'
+type Mode = 'signin' | 'signup' | 'reset' | 'verify' | 'reset-verify'
 
 const STYLES = `
 .auth-screen{
@@ -169,10 +178,29 @@ export function AuthScreen() {
         const err = await verifyEmailOtp(email.trim(), code.trim())
         if (err) setError(err)
         // success: useSession will update; component unmounts.
+      } else if (mode === 'reset-verify') {
+        const err = await verifyRecoveryOtp(email.trim(), code.trim())
+        if (err) setError(err)
+        else {
+          // Verifying the code signs the user in, so the auth gate is already
+          // swapping this screen for the app — finish by saving the new
+          // password, and surface a (rare) failure via alert since this
+          // component is unmounting.
+          const perr = await updatePassword(password)
+          if (perr) alert(`You're signed in, but the new password could not be saved: ${perr}`)
+        }
       } else {
         const err = await resetPassword(email.trim())
         if (err) setError(err)
-        else setNotice("If that email is registered, we've sent a reset link.")
+        else {
+          setPassword('')
+          setCode('')
+          setMode('reset-verify')
+          setNotice(
+            `If that email is registered, we sent an 8-digit code to ${email.trim()}. ` +
+              'Enter it below with your new password.',
+          )
+        }
       }
     } finally {
       setSubmitting(false)
@@ -199,7 +227,12 @@ export function AuthScreen() {
     reset()
     setSubmitting(true)
     try {
-      const err = await resendSignupOtp(email.trim())
+      // Recovery codes are re-sent by requesting the reset again; signup
+      // codes have a dedicated resend endpoint.
+      const err =
+        mode === 'reset-verify'
+          ? await resetPassword(email.trim())
+          : await resendSignupOtp(email.trim())
       if (err) setError(err)
       else setNotice('Sent a new code — check your email.')
     } finally {
@@ -210,13 +243,14 @@ export function AuthScreen() {
   const title =
     mode === 'signin' ? 'Sign in'
     : mode === 'signup' ? 'Create account'
-    : mode === 'verify' ? 'Check your email'
+    : mode === 'verify' || mode === 'reset-verify' ? 'Check your email'
     : 'Reset password'
   const submitLabel =
     mode === 'signin' ? (submitting ? 'Signing in…' : 'Sign in')
     : mode === 'signup' ? (submitting ? 'Creating…' : 'Create account')
     : mode === 'verify' ? (submitting ? 'Verifying…' : 'Verify')
-    : (submitting ? 'Sending…' : 'Send reset email')
+    : mode === 'reset-verify' ? (submitting ? 'Saving…' : 'Set new password')
+    : (submitting ? 'Sending…' : 'Send reset code')
 
   return (
     <div
@@ -235,14 +269,15 @@ export function AuthScreen() {
           {mode === 'signin' && 'Welcome back.'}
           {mode === 'signup' && 'A canvas, a calculator, and a tutor.'}
           {mode === 'verify' && `Enter the 8-digit code we sent to ${email}.`}
-          {mode === 'reset' && "We'll email you a link to set a new password."}
+          {mode === 'reset-verify' && `Enter the code we sent to ${email} and choose a new password.`}
+          {mode === 'reset' && "We'll email you an 8-digit code to set a new password."}
         </p>
 
         {error && <div className="error" role="alert">{error}</div>}
         {notice && <div className="notice">{notice}</div>}
 
         <form onSubmit={onSubmit}>
-          {mode !== 'verify' && (
+          {mode !== 'verify' && mode !== 'reset-verify' && (
             <label>
               Email
               <input
@@ -254,22 +289,9 @@ export function AuthScreen() {
               />
             </label>
           )}
-          {mode !== 'reset' && mode !== 'verify' && (
+          {(mode === 'verify' || mode === 'reset-verify') && (
             <label>
-              Password
-              <input
-                type="password"
-                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-          )}
-          {mode === 'verify' && (
-            <label>
-              Confirmation code
+              {mode === 'verify' ? 'Confirmation code' : 'Reset code'}
               <input
                 type="text"
                 inputMode="numeric"
@@ -280,6 +302,19 @@ export function AuthScreen() {
                 placeholder="12345678"
                 value={code}
                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+              />
+            </label>
+          )}
+          {mode !== 'reset' && mode !== 'verify' && (
+            <label>
+              {mode === 'reset-verify' ? 'New password' : 'Password'}
+              <input
+                type="password"
+                autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </label>
           )}
@@ -319,7 +354,7 @@ export function AuthScreen() {
               <button type="button" onClick={() => switchMode('signup')}>Create an account</button>
               <button type="button" onClick={() => switchMode('reset')}>Forgot password?</button>
             </>
-          ) : mode === 'verify' ? (
+          ) : mode === 'verify' || mode === 'reset-verify' ? (
             <>
               <button type="button" onClick={onResend} disabled={submitting}>Resend code</button>
               <button type="button" onClick={() => switchMode('signin')}>Back to sign in</button>
