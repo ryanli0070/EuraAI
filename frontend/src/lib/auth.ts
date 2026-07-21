@@ -70,6 +70,49 @@ export async function signOut(): Promise<void> {
   await supabase.auth.signOut()
 }
 
+/**
+ * Start a guest session (Supabase anonymous sign-in), so the app's core
+ * features work without registering (App Store guideline 5.1.1(v)). The guest
+ * gets a real authenticated session — same RLS and backend JWT path as a full
+ * account — with `is_anonymous` set on the user. Returns an error message on
+ * failure, or null on success.
+ */
+export async function signInAsGuest(): Promise<string | null> {
+  const { error } = await supabase.auth.signInAnonymously()
+  return error?.message ?? null
+}
+
+/** Whether the current user is a guest (anonymous) session. */
+export function isGuest(user: User | null): boolean {
+  return user?.is_anonymous === true
+}
+
+/**
+ * Step 1 of upgrading a guest to a full account: attach an email + password to
+ * the current anonymous user. The password takes effect immediately; the email
+ * must be confirmed with the 8-digit code Supabase sends to it. The guest's
+ * canvases, folders, and chats all stay — it's the same user id throughout.
+ */
+export async function beginGuestUpgrade(email: string, password: string): Promise<string | null> {
+  const { error } = await supabase.auth.updateUser({ email, password })
+  return error?.message ?? null
+}
+
+/**
+ * Step 2: confirm the emailed code. On success the session refreshes with
+ * `is_anonymous` cleared, so `useSession()` re-renders as a full account.
+ */
+export async function verifyGuestUpgradeOtp(email: string, token: string): Promise<string | null> {
+  const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email_change' })
+  return error?.message ?? null
+}
+
+/** Re-send the guest-upgrade confirmation code to the given email. */
+export async function resendGuestUpgradeOtp(email: string): Promise<string | null> {
+  const { error } = await supabase.auth.resend({ type: 'email_change', email })
+  return error?.message ?? null
+}
+
 export async function resetPassword(email: string): Promise<string | null> {
   const { error } = await supabase.auth.resetPasswordForEmail(email)
   return error?.message ?? null

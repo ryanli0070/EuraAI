@@ -7,7 +7,7 @@
  * (email, member-since), and anything that needs a backend is rendered with a
  * "Soon" affordance rather than a button that silently does nothing.
  */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
 import {
   Check,
@@ -22,7 +22,14 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react'
-import { deleteAccount, useSession } from '../lib/auth'
+import {
+  beginGuestUpgrade,
+  deleteAccount,
+  isGuest,
+  resendGuestUpgradeOtp,
+  useSession,
+  verifyGuestUpgradeOtp,
+} from '../lib/auth'
 import {
   getAiConsent,
   getScrollVertical,
@@ -88,6 +95,181 @@ export function AccountScreen({
 // ---------------------------------------------------------------------------
 
 function ProfileScreen({ user }: { user: User | null }) {
+  if (isGuest(user)) return <GuestProfileScreen user={user} />
+  return <FullProfileScreen user={user} />
+}
+
+/**
+ * Profile for a guest (anonymous) session: no email to show, so the screen
+ * centers on upgrading to a full account. The upgrade keeps the same user id —
+ * every canvas, folder, and chat the guest made comes along.
+ */
+function GuestProfileScreen({ user }: { user: User | null }) {
+  const guestSince = user?.created_at
+    ? new Date(user.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })
+    : '—'
+
+  const [step, setStep] = useState<'form' | 'verify'>('form')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const reset = () => {
+    setError(null)
+    setNotice(null)
+  }
+
+  const onBegin = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy) return
+    reset()
+    setBusy(true)
+    try {
+      const err = await beginGuestUpgrade(email.trim(), password)
+      if (err) setError(err)
+      else {
+        setStep('verify')
+        setNotice(`We emailed an 8-digit code to ${email.trim()}. Enter it below to finish.`)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onVerify = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy) return
+    reset()
+    setBusy(true)
+    try {
+      const err = await verifyGuestUpgradeOtp(email.trim(), code.trim())
+      if (err) setError(err)
+      // success: useSession refreshes with is_anonymous cleared and this
+      // screen re-renders as the full profile.
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onResend = async () => {
+    if (busy) return
+    reset()
+    setBusy(true)
+    try {
+      const err = await resendGuestUpgradeOtp(email.trim())
+      if (err) setError(err)
+      else setNotice('Sent a new code — check your email.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="profile-head">
+        <div className="avatar">?</div>
+        <div className="profile-id">
+          <div className="profile-email">Guest</div>
+          <div className="profile-meta">Trying Eura since {guestSince}</div>
+        </div>
+      </div>
+
+      <section className="acct-section">
+        <div className="label">Create your free account</div>
+        <div className="acct-card">
+          <p className="guest-pitch">
+            Everything you've made as a guest — canvases, folders, and chats — comes
+            with you, and you'll be able to sign in from any device.
+          </p>
+
+          {error && <div className="inline-error" role="alert">{error}</div>}
+          {notice && <div className="inline-notice">{notice}</div>}
+
+          {step === 'form' ? (
+            <form onSubmit={(e) => void onBegin(e)}>
+              <div className="field">
+                <label htmlFor="gu-email">Email</label>
+                <input
+                  id="gu-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="gu-password">Password</label>
+                <input
+                  id="gu-password"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              <div className="btn-row">
+                <button type="submit" className="acct-btn primary" disabled={busy}>
+                  {busy ? 'Creating…' : 'Create account'}
+                </button>
+              </div>
+              <p className="guest-agree">
+                By creating an account, you confirm you're 13 or older and agree to our{' '}
+                <a href="https://euralearn.com/terms" target="_blank" rel="noopener noreferrer">Terms</a>
+                {' '}and{' '}
+                <a href="https://euralearn.com/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={(e) => void onVerify(e)}>
+              <div className="field">
+                <label htmlFor="gu-code">Confirmation code</label>
+                <input
+                  id="gu-code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]*"
+                  maxLength={8}
+                  required
+                  placeholder="12345678"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+                />
+              </div>
+              <div className="btn-row">
+                <button type="submit" className="acct-btn primary" disabled={busy}>
+                  {busy ? 'Verifying…' : 'Verify'}
+                </button>
+              </div>
+              <div className="guest-links">
+                <button type="button" onClick={() => void onResend()} disabled={busy}>Resend code</button>
+                <button type="button" onClick={() => { reset(); setStep('form') }}>Change email</button>
+              </div>
+            </form>
+          )}
+        </div>
+      </section>
+
+      <section className="acct-section">
+        <div className="label">Heads up</div>
+        <div className="acct-card">
+          <p className="guest-pitch">
+            Guest work is tied to this device. Signing out permanently deletes it,
+            and removing the app loses it too — create an account to keep it.
+          </p>
+        </div>
+      </section>
+    </>
+  )
+}
+
+function FullProfileScreen({ user }: { user: User | null }) {
   const email = user?.email ?? '—'
   const monogram = (user?.email?.[0] ?? '?').toUpperCase()
   const memberSince = user?.created_at
@@ -586,4 +768,28 @@ const STYLES = `
 .account-screen .faq-a{padding:0 16px 16px;font-size:13.5px;line-height:1.55;color:var(--ink-soft)}
 
 .account-screen .acct-foot{font-size:12.5px;color:var(--pencil);text-align:center;margin:0;padding:0 8px}
+
+.account-screen .guest-pitch{
+  font-size:13.5px;line-height:1.55;color:var(--ink-soft);margin:0;padding:15px 16px;
+}
+.account-screen .inline-error{
+  margin:0 16px;background:rgba(180,69,61,0.08);color:var(--red);
+  border:1px solid rgba(180,69,61,0.3);border-radius:8px;padding:8px 12px;font-size:13px;
+}
+.account-screen .inline-notice{
+  margin:0 16px;background:rgba(45,90,217,0.06);color:var(--accent);
+  border:1px solid rgba(45,90,217,0.25);border-radius:8px;padding:8px 12px;font-size:13px;
+}
+.account-screen .guest-agree{
+  font-size:12px;line-height:1.5;color:var(--pencil);margin:0;padding:0 16px 15px;
+}
+.account-screen .guest-agree a{color:var(--accent);text-decoration:underline}
+.account-screen .guest-links{
+  display:flex;justify-content:space-between;padding:0 16px 15px;font-size:13px;
+}
+.account-screen .guest-links button{
+  background:none;border:none;cursor:pointer;color:var(--accent);
+  font:inherit;padding:0;text-decoration:underline;
+}
+.account-screen .guest-links button:disabled{opacity:0.55;cursor:default}
 `

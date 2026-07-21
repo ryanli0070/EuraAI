@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Keyboard } from '@capacitor/keyboard'
-import { resendSignupOtp, resetPassword, signIn, signUp, verifyEmailOtp } from '../lib/auth'
+import { resendSignupOtp, resetPassword, signIn, signInAsGuest, signUp, verifyEmailOtp } from '../lib/auth'
 import { hapticTap, isNative } from '../lib/native'
 
 type Mode = 'signin' | 'signup' | 'reset' | 'verify'
@@ -92,6 +92,22 @@ const STYLES = `
   margin:16px 0 0;font-size:12px;line-height:1.5;color:var(--pencil);text-align:center;
 }
 .auth-screen .auth-agree a{color:var(--accent);text-decoration:underline}
+.auth-screen .divider{
+  display:flex;align-items:center;gap:10px;margin:18px 0 12px;
+  font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--pencil);
+}
+.auth-screen .divider::before,.auth-screen .divider::after{
+  content:"";flex:1;border-top:1px dashed var(--rule);
+}
+.auth-screen .guest-btn{
+  display:flex;align-items:center;justify-content:center;width:100%;
+  cursor:pointer;font-family:var(--ui);font-weight:600;font-size:14px;
+  padding:11px 16px;border-radius:999px;border:1.5px solid var(--ink);
+  background:transparent;color:var(--ink);
+  transition:transform .15s ease, opacity .2s ease;
+}
+.auth-screen .guest-btn:hover:not(:disabled){transform:translateY(-1px)}
+.auth-screen .guest-btn:disabled{opacity:0.6;cursor:not-allowed}
 `
 
 export function AuthScreen() {
@@ -158,6 +174,20 @@ export function AuthScreen() {
         if (err) setError(err)
         else setNotice("If that email is registered, we've sent a reset link.")
       }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const onGuest = async () => {
+    if (submitting) return
+    void hapticTap()
+    reset()
+    setSubmitting(true)
+    try {
+      const err = await signInAsGuest()
+      if (err) setError(err)
+      // success: useSession will update; component unmounts.
     } finally {
       setSubmitting(false)
     }
@@ -257,6 +287,22 @@ export function AuthScreen() {
             {submitLabel}
           </button>
         </form>
+
+        {mode === 'signin' && (
+          <>
+            <div className="divider">or</div>
+            <button type="button" className="guest-btn" onClick={() => void onGuest()} disabled={submitting}>
+              Continue without an account
+            </button>
+            <p className="auth-agree">
+              Try Eura as a guest — no sign-up needed. You can create a free account
+              later to keep your work across devices. By continuing you agree to our{' '}
+              <a href="https://euralearn.com/terms" target="_blank" rel="noopener noreferrer">Terms</a>
+              {' '}and{' '}
+              <a href="https://euralearn.com/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+            </p>
+          </>
+        )}
 
         {mode === 'signup' && (
           <p className="auth-agree">

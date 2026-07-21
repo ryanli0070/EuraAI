@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<!--
+  "Confirm email change" email for Eura. Shows an 8-digit OTP code ({{ .Token }})
+  that the user types back into the app — no confirmation link, so it works
+  identically on web and the iOS app. This is the email a guest receives when
+  upgrading to a full account (and the one any user gets when changing email).
+
+  This is the canonical source for the template. Apply it to the hosted
+  Supabase project with scripts/apply-supabase-email-template.sh.
+-->
+<html>
+  <body style="font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f6f1e6;margin:0;padding:32px;">
+    <table align="center" width="100%" style="max-width:420px;margin:0 auto;background:#fdfaf2;border:1.5px solid #18243f;border-radius:12px;border-collapse:separate;">
+      <tr>
+        <td style="padding:32px 28px;">
+          <div style="font-size:22px;font-weight:600;color:#18243f;margin-bottom:8px;">Eura</div>
+          <h1 style="font-size:20px;color:#18243f;margin:0 0 12px;">Confirm this email address</h1>
+          <p style="font-size:14px;color:#3a4a69;line-height:1.5;margin:0 0 20px;">
+            Enter this code in the app to confirm this email address for your Eura account:
+          </p>
+          <div style="font-size:34px;font-weight:700;letter-spacing:8px;color:#18243f;background:#fff;border:1.5px solid #18243f;border-radius:8px;padding:16px;text-align:center;">
+            {{ .Token }}
+          </div>
+          <p style="font-size:12px;color:#6b7284;line-height:1.5;margin:20px 0 0;">
+            This code expires in 1 hour. If you didn't request it, you can safely ignore this email.
+          </p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

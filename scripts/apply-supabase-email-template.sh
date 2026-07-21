@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 #
-# Apply Eura's "Confirm signup" email template (the 6-digit OTP code email) to
-# the HOSTED Supabase project via the Management API. This is the one Supabase-
-# side change the OTP signup flow needs — it makes the confirmation email show
-# {{ .Token }} so users can type the code into the app instead of tapping a link.
+# Apply Eura's OTP-code email templates to the HOSTED Supabase project via the
+# Management API:
+#   - "Confirm signup"       (supabase/templates/confirmation.html)
+#   - "Confirm email change" (supabase/templates/email_change.html)
+# Both show {{ .Token }} so users type the 8-digit code into the app instead of
+# tapping a link. The email-change one is what a guest receives when upgrading
+# to a full account.
 #
-# Only touches the confirmation template + subject — it does NOT push the rest
-# of supabase/config.toml (which has drifted to local-dev values), so it can't
+# Only touches these two templates + subjects — it does NOT push the rest of
+# supabase/config.toml (which has drifted to local-dev values), so it can't
 # clobber production auth settings.
 #
 # Usage (token stays local, never in the repo):
@@ -16,19 +19,25 @@
 set -euo pipefail
 
 PROJECT_REF="lfctnhvnpxrocafiwkdb"
-TEMPLATE_FILE="$(cd "$(dirname "$0")/.." && pwd)/supabase/templates/confirmation.html"
+TEMPLATE_DIR="$(cd "$(dirname "$0")/.." && pwd)/supabase/templates"
 
 : "${SUPABASE_ACCESS_TOKEN:?Set SUPABASE_ACCESS_TOKEN — get one at https://supabase.com/dashboard/account/tokens}"
 
-content="$(cat "$TEMPLATE_FILE")"
+confirmation="$(cat "$TEMPLATE_DIR/confirmation.html")"
+email_change="$(cat "$TEMPLATE_DIR/email_change.html")"
 
 jq -n \
-  --arg content "$content" \
-  --arg subject "Your Eura confirmation code" \
-  '{mailer_templates_confirmation_content: $content, mailer_subjects_confirmation: $subject}' \
+  --arg confirmation "$confirmation" \
+  --arg email_change "$email_change" \
+  '{
+    mailer_templates_confirmation_content: $confirmation,
+    mailer_subjects_confirmation: "Your Eura confirmation code",
+    mailer_templates_email_change_content: $email_change,
+    mailer_subjects_email_change: "Your Eura confirmation code"
+  }' \
 | curl -fsS -X PATCH "https://api.supabase.com/v1/projects/${PROJECT_REF}/config/auth" \
     -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
     --data @- >/dev/null
 
-echo "✓ Confirmation email template applied to project ${PROJECT_REF}"
+echo "✓ Confirmation + email-change templates applied to project ${PROJECT_REF}"

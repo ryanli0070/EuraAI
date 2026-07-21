@@ -1,4 +1,43 @@
-# App Review — replies for rejection (Submission 5c061ddd, v1.0 build 2)
+# App Review — replies for rejections (Submission 5c061ddd)
+
+## Round 2 — July 20, 2026 (v1.0 build 3): Guideline 5.1.1(v) forced registration
+
+Apple: "The app requires users to register before accessing non account based features."
+
+**Fixed in build 4 with a guest mode.** The sign-in screen now has a prominent
+"Continue without an account" button (Supabase anonymous sign-in). Guests get the full
+app — canvas, handwriting recognition, AI checking/hints/chat — with zero personal
+information collected. Profile offers an optional upgrade ("Create your free account")
+that keeps all guest work; signing out as a guest warns about unrecoverable work.
+
+Paste into the Resolution Center when resubmitting:
+
+> Thank you for the review. We have revised the app so that registration is optional.
+>
+> On the first screen, users can now tap "Continue without an account" to use the full
+> app — the drawing canvas, handwriting recognition, and AI tutoring feedback — without
+> registering or providing any personal information.
+>
+> Creating an account remains available, but strictly optional. It is only needed for the
+> genuinely account-based feature: syncing a user's saved canvases, folders, and chat
+> history across devices and restoring them after reinstalling. Users who start as guests
+> can optionally create an account later (Profile → "Create your free account") and keep
+> their work.
+>
+> This change ships in build 4, now submitted for review.
+
+**Build 4 resubmit checklist**
+1. Bump build number to **4** (Xcode target → General → Identity).
+2. `cd frontend && npm run build && npx cap sync ios`
+3. Open `frontend/ios/App/App.xcworkspace` in Xcode → Product → Archive → upload.
+4. Select the new build in App Store Connect, paste the reply above, submit.
+
+*(Supabase side is already done: anonymous sign-ins enabled and the email-change OTP
+template applied via the Management API on 2026-07-20 — nothing to configure there.)*
+
+---
+
+# Round 1 — June 25, 2026 (v1.0 build 2)
 
 Rejection date: June 25, 2026. Three items were raised. Paste the text below into the
 Resolution Center reply in App Store Connect, and upload a new build (1.0 build 3) that

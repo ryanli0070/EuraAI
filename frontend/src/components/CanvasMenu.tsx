@@ -21,7 +21,7 @@ import {
   setFolderColor,
   subscribe,
 } from '../lib/canvasStore'
-import { signOut } from '../lib/auth'
+import { deleteAccount, isGuest, signOut, useSession } from '../lib/auth'
 import { hapticTap } from '../lib/native'
 import { importFile, type ImportProgress } from '../lib/import'
 import { AccountScreen, type AccountScreenId } from './AccountScreen'
@@ -461,6 +461,7 @@ type CanvasMenuProps = {
 const EMPTY_INDEX: CanvasIndex = { version: 2, canvases: [], folders: [] }
 
 export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
+  const { user } = useSession()
   const [index, setIndex] = useState<CanvasIndex>(EMPTY_INDEX)
   const [indexLoaded, setIndexLoaded] = useState(false)
   const [parent, setParent] = useState<FolderId | null>(null)
@@ -932,7 +933,29 @@ export function CanvasMenu({ onOpenCanvas }: CanvasMenuProps) {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onOpenScreen={(id) => { setSidebarOpen(false); setAccountScreen(id) }}
-        onSignOut={() => { setSidebarOpen(false); void signOut() }}
+        onSignOut={() => {
+          setSidebarOpen(false)
+          // A guest session can't be signed back into, so their server-side
+          // data would be stranded forever. Confirm (pointing at the way to
+          // keep it), then delete the anonymous account outright rather than
+          // leaving unreachable content behind.
+          if (isGuest(user)) {
+            if (
+              !confirm(
+                "You're using Eura as a guest — signing out permanently deletes your canvases. " +
+                  'To keep them, create a free account from Profile first. Sign out anyway?',
+              )
+            )
+              return
+            void (async () => {
+              const err = await deleteAccount()
+              if (err) alert(err)
+              // Success signs out locally too; the auth gate shows AuthScreen.
+            })()
+            return
+          }
+          void signOut()
+        }}
       />
 
       <AccountScreen screen={accountScreen} onClose={() => setAccountScreen(null)} />
