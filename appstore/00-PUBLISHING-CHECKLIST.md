@@ -1,6 +1,16 @@
 # Publishing Eura on the Apple App Store — Requirements Checklist
 
-_Last updated: June 11, 2026. This maps Apple's requirements to Eura's current state (per `HANDOFF.md`). The app is **Eura**; **Orion** is the in-app AI tutor. Items marked ✅ are already done in your repo; ❌ are still open._
+> ## ✅ OUTCOME: PUBLISHED
+> **"Eura Learn" went live on the App Store on July 22, 2026** (v1.0 build 4, bundle
+> `com.euralearn.eura`), after two rejection rounds (Jun 25: icon/business-model/AI-consent;
+> Jul 20: 5.1.1(v) forced registration — fixed with guest mode). Every requirement below was
+> satisfied except one, which shipped anyway as accepted risk and is now the top post-launch
+> hardening item: **moving the Supabase session off `localStorage` to Capacitor secure
+> storage**. The "auth email deep links" item became obsolete — all auth emails use 8-digit
+> OTP codes instead of links. Current state lives in `HANDOFF.md`; review replies in
+> `04-APP-REVIEW-REPLIES.md`. This checklist is retained as the historical record.
+
+_Last updated: June 11, 2026 (outcome banner added July 22). This maps Apple's requirements to Eura's state at the time (per `HANDOFF.md`). The app is **Eura**; **Orion** is the in-app AI tutor. Items marked ✅ were done in the repo; ❌ were still open as of June 11._
 
 This app ships as a **Capacitor-wrapped iOS app** (iPad-first), so it follows the **Apple App Store** process. There is no Google Play involvement unless you later add Android.
 

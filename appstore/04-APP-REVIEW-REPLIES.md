@@ -1,5 +1,11 @@
 # App Review — replies for rejections (Submission 5c061ddd)
 
+> **✅ FINAL OUTCOME: APPROVED — live on the App Store July 22, 2026** (v1.0 build 4).
+> Both rejection rounds below were resolved; this file is the historical archive.
+> For any future update, remember: 5.1.1(v) applies to every submission (keep guest
+> access to free features), and paid features must ship via Apple IAP only (that
+> commitment is on record in the 2.1(b) reply below).
+
 ## Round 2 — July 20, 2026 (v1.0 build 3): Guideline 5.1.1(v) forced registration
 
 Apple: "The app requires users to register before accessing non account based features."

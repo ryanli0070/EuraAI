@@ -1,8 +1,16 @@
 # EuraAI
 
-Math-tutoring iPad app ("Eura"): React 19 + Vite frontend with an in-house
+Math-tutoring iPad app ("Eura Learn", **live on the App Store since July 22, 2026** —
+v1.0, bundle `com.euralearn.eura`): React 19 + Vite frontend with an in-house
 whiteboard engine, wrapped in Capacitor for iOS; FastAPI backend on AWS App
-Runner; Supabase for auth/Postgres/Storage. See `HANDOFF.md` for architecture.
+Runner; Supabase for auth/Postgres/Storage (email/password + anonymous guest
+sessions, all email confirmations via 8-digit OTP codes). See `HANDOFF.md` for
+architecture and current state.
+
+Production is user-facing now: don't pause the App Runner service, don't push
+`supabase config`, and remember App Review constraints on future updates —
+guest access to free features must stay (Guideline 5.1.1(v)), and any paid
+features must use Apple In-App Purchase.
 
 - Frontend dev: `cd frontend && npm run dev` (backend URL from `.env.local`)
 - Prod build: `cd frontend && npm run build` (uses `.env.production`, baked

@@ -1,8 +1,16 @@
 # Handoff — Email confirmation via one-time code (OTP)
 
-**Date:** 2026-06-20
+**Date:** 2026-06-20 · **Superseded 2026-07-22:** everything below shipped — the app is
+**live on the App Store** (v1.0 build 4). The "remaining steps" are resolved: the iPad
+install succeeded in later sessions, and the OTP approach was extended to **password
+reset** (`type:'recovery'`, commit `90f5ffd`) and **guest→account email change**
+(`type:'email_change'`) on 2026-07-20, so the "reset still uses a link" gotcha below is
+no longer true. All three templates: `supabase/templates/{confirmation,email_change,recovery}.html`,
+applied via `scripts/apply-supabase-email-template.sh`. Hosted `site_url` is now
+`https://euralearn.com`. Kept for historical context.
+
 **Branch:** `main` · **Commit:** `4f951f0 "1 time code"` (committed + pushed to `origin/main`)
-**Status:** ✅ Code shipped & ✅ Supabase configured · ⏳ iPad install blocked on USB · 🔑 token to revoke
+**Status (as of 2026-06-20):** ✅ Code shipped & ✅ Supabase configured · ⏳ iPad install blocked on USB · 🔑 token to revoke
 
 ---
 

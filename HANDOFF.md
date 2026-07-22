@@ -1,23 +1,29 @@
 # EuraAI — Source-of-Truth Handoff
 
-**Branch:** `supabase-migration`
-**Last updated:** 2026-06-02
-**Status:** Supabase migration **code-complete and committed**, running locally on macOS end-to-end. Account deletion **activated** (service-role key set + validated). Live schema **snapshotted to disk** (`supabase/schema.sql`). **Backend deployed over HTTPS on AWS App Runner** (`https://t8tutmtkjt.us-east-1.awsapprunner.com`, verified) and the frontend prod build targets it — **the app is now ready to be wrapped in Capacitor** (see "Resume here" below + §15).
+**Branch:** `main`
+**Last updated:** 2026-07-22
+**Status:** 🚀 **LIVE ON THE APP STORE** — "Eura Learn" (bundle `com.euralearn.eura`), v1.0 (build 4), approved and released July 22, 2026. Capacitor-wrapped iOS app (iPad-first); backend on AWS App Runner; Supabase auth/data/storage. Everything below §"Current state" is the historical migration record and remains accurate as reference.
 
 ---
 
-## ⏭️ Resume here (next session)
+## ⏭️ Current state (2026-07-22) — shipped; what's next is post-launch
 
-**✅ Milestone reached: the backend is deployed over HTTPS, so the app is now ready to be wrapped in Capacitor.** The FastAPI backend runs on **AWS App Runner** at **`https://t8tutmtkjt.us-east-1.awsapprunner.com`** — verified this session: `/api/health` → 200 `{"ok":true}`, POST `/api/check` & `/api/help` no-token → 401, and the `capacitor://localhost` CORS preflight returns the right `Access-Control-Allow-Origin`. `frontend/.env.production` points at it and the prod build bakes it in (no `localhost` leftover).
+**The App Store runway is complete.** What shipped between the 06-02 snapshot and launch:
 
-**Next stage — Capacitor integration (§15-C) + the remaining App Store blockers (§15-B):**
-1. **Wrap in Capacitor** — `npm i @capacitor/core @capacitor/cli @capacitor/ios`, `npx cap init`, add the iOS platform, `npx cap copy`. The web build already targets the deployed backend; CORS already allows `capacitor://localhost`.
-2. **Auth email deep links** (§15-C-7) — confirmation/reset links must return into the WKWebView (Capacitor URL scheme + Supabase Redirect-URL allowlist).
-3. **Token storage** (§15-C-8) — move the `supabase-js` session off `localStorage` to Capacitor secure storage before submission.
-4. **Apple Pencil** (§15-C-9) — verify `pointerType==='pen'` + pressure on a real iPad in the WKWebView.
-5. **App Privacy disclosures** (§15-B-5) — App Store blocker, independent of Capacitor. *(Custom SMTP ✅ done via Resend; in-app account deletion ✅ verified.)*
+- **Capacitor wrap done** (Capacitor 8, SPM-based — `frontend/ios/App/App.xcodeproj`, no CocoaPods/xcworkspace). Build/test guide: `testingapp.md`.
+- **OTP auth everywhere, zero deep links.** Signup confirmation (commit `4f951f0`), guest→account upgrade email-change, and password reset (`90f5ffd`) all use 8-digit emailed codes typed into the app — the §15-C-7 deep-link work became unnecessary. Templates live in `supabase/templates/*.html`, applied via `scripts/apply-supabase-email-template.sh`. Hosted `site_url` fixed to `https://euralearn.com` (was `localhost:3000`, which had silently broken reset links).
+- **Guest mode** (commit `f694f17`, the Guideline 5.1.1(v) fix): "Continue without an account" → Supabase **anonymous sign-in**. Guests are `authenticated`-role users, so RLS/Storage/backend JWT all work unchanged. Upgrade in Profile keeps the same user id (work survives). Guest sign-out calls `DELETE /api/account` (full server wipe — no orphaned data). `external_anonymous_users_enabled=true` in hosted auth config.
+- **Test framework**: Vitest + @testing-library (`frontend/`, `npm test`, 9 tests), CI at `.github/workflows/test.yml`, conventions in `frontend/TESTING.md`.
+- **Review history**: build 2 rejected Jun 25 (icon 2.3.8, business model 2.1(b), AI consent 5.1.x) → fixed in build 3. Build 3 rejected Jul 20 (5.1.1(v) forced registration) → fixed in build 4 (guest mode). Build 4 approved; live Jul 22. Full replies archive: `appstore/04-APP-REVIEW-REPLIES.md`. (Note: the original rejected submission was accidentally removed in App Store Connect on Jul 21 — its message thread is read-only but preserved; rejection history follows the app.)
+- Reviewer demo account on file in App Store Connect: `eura@euralearn.com` (verified working Jul 21).
 
-**App Runner ops (full deploy details in §15-A-2 + §18):** service `euraai-api`, region `us-east-1`, ARN `…/euraai-api/ba2e768cacd44d7a800ceab59a4f5c70`. **Redeploy** = rebuild/push the image (§18) then `aws apprunner start-deployment --service-arn <arn>`. **Stop billing while idle:** `aws apprunner pause-service --service-arn <arn>` (resume with `resume-service`). Smallest instance (0.25 vCPU / 0.5 GB) — bump if memory-pressured (§15-D-11).
+**Post-launch roadmap (nothing here is a blocker):**
+1. **Secure token storage** (§15-C-8, still open) — `supabase-js` session sits in WebView `localStorage`; if iOS ever evicts it, registered users re-login but **guests lose their work**. Move to a Capacitor Preferences/secure-storage adapter.
+2. **Stale-guest cleanup** — scheduled deletion of anonymous users inactive ~30 days (app-deletion orphans; sign-out already self-cleans). Route through the backend's deletion helpers so Storage blobs go too.
+3. **Console-noise guards** from the 2026-07-21 QA (`.gstack/qa-reports/qa-report-localhost-2026-07-21.md`): skip `loadDoc` for never-saved canvases (400 on first open); guard `canvasStore.loadIndex` on a live session (42501 on sign-out teardown).
+4. **Monetization (when ready)**: freemium via Apple IAP only (that commitment is on record with App Review — see 2.1(b) reply). Keep the free tier guest-accessible; 5.1.1(v) applies to every future update. Any third-party OAuth triggers the Sign-in-with-Apple mandate — email/password + guest avoids it.
+
+**App Runner ops (full deploy details in §15-A-2 + §18):** service `euraai-api`, region `us-east-1`, ARN `…/euraai-api/ba2e768cacd44d7a800ceab59a4f5c70`. **Redeploy** = rebuild/push the image (§18) then `aws apprunner start-deployment --service-arn <arn>`. ⚠️ **Do NOT pause the service anymore** — the app is live on the App Store; pausing kills AI features (and account deletion) for real users. Smallest instance (0.25 vCPU / 0.5 GB) — bump if memory-pressured (§15-D-11).
 
 **Tooling installed (macOS, Homebrew):** `node` v26, `python@3.12` (backend venv at `backend/venv`), `supabase`, `flyctl`, `awscli` (IAM user `eura-deploy`, us-east-1), `colima`+`docker`+`docker-buildx`, `lightsailctl`.
 
@@ -27,7 +33,7 @@
 
 ## 1. What EuraAI is
 
-A math-tutoring app (working name "Orion") for iPad: students draw work on a custom freehand canvas, GPT-4o vision OCRs it, SymPy verifies the steps, and the AI gives Socratic hints + answers follow-ups. Intended delivery is a **Capacitor-wrapped iOS app** on the App Store, iPad-first.
+A math-tutoring app (working name "Orion") for iPad: students draw work on a custom freehand canvas, GPT-4o vision OCRs it, SymPy verifies the steps, and the AI gives Socratic hints + answers follow-ups. Delivered as a **Capacitor-wrapped iOS app** on the App Store ("Eura Learn", live since July 22, 2026), iPad-first.
 
 **Stack**
 - **Frontend:** React 19 + Vite + TypeScript; in-house `WhiteboardEngine` (canvas); KaTeX; Framer Motion. Deployed to Vercel (web); to be wrapped in Capacitor for iOS.
@@ -80,7 +86,10 @@ c2bc2e9  fix(auth): verify Supabase ES256 tokens via JWKS
 | Live schema snapshot on disk | ✅ `supabase/schema.sql` (commit `57e72e8`) |
 | Deploy backend over HTTPS | ✅ **AWS App Runner** (`euraai-api`); `/api/health` 200, auth 401, capacitor CORS ok (§15-A) |
 | Custom SMTP (auth emails deliver) | ✅ **Resend** SMTP wired into Supabase Auth (verified domain) |
-| Auth deep links, privacy, token storage, Pencil test | ❌ not done (see §15) |
+| Auth deep links | ✅ obsolete — all auth email flows use OTP codes, no links (see "Current state") |
+| App Privacy disclosures | ✅ filled in App Store Connect (app approved) |
+| Apple Pencil on real iPad | ✅ exercised on physical iPad through builds 2–4; shipped |
+| Token storage (localStorage → secure storage) | ❌ post-launch hardening item #1 (see "Current state") |
 
 ---
 
@@ -259,6 +268,10 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 
 ## 15. Remaining work — App Store runway (prioritized)
 
+> **2026-07-22: the runway is complete — the app is approved and live.** Item statuses
+> below are updated in place; anything still ❌ is post-launch hardening, tracked in
+> "Current state" at the top of this file.
+
 **A. Ship / activate**
 1. ✅ **Account deletion activated + verified** — `SUPABASE_SERVICE_ROLE_KEY` set in `.env` (and SSM for prod), validated against the Supabase admin API. *Full happy-path delete via `DELETE /api/account` with a signed-in user **confirmed end-to-end** (2026-06-02).*
 2. ✅ **Backend deployed (DONE 2026-06-02):** FastAPI on **AWS App Runner** (`euraai-api`, us-east-1) at `https://t8tutmtkjt.us-east-1.awsapprunner.com`. Image cross-built `linux/amd64` (App Runner is x86_64-only) from `backend/Dockerfile` → pushed to **ECR** `euraai-api`. The 3 secrets (`OPENAI_API_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`) live in **SSM Parameter Store** (SecureString) and are injected via App Runner `RuntimeEnvironmentSecrets` (not plaintext config); `SUPABASE_URL` is a plain runtime env var. Two IAM roles: `AppRunnerECRAccessRole` (image pull) + `EuraAIAppRunnerInstanceRole` (SSM read, KMS-scoped to `ssm.*`). HTTP health check on `/api/health`. `frontend/.env.production` → `VITE_API_BASE_URL` set and `npm run build` verified (URL baked into the bundle, no `localhost` leftover). (Web/Vercel deploy still optional — Capacitor bundles the frontend; `CORS_ORIGINS` only needs a web origin if you ship web.)
@@ -266,13 +279,13 @@ Smoke-tested 2026-05-30 against the live project with a **real ES256 access toke
 **B. Hard App Store blockers**
 3. ✅ **In-app account deletion** (Guideline 5.1.1(v)) — built + activated + **happy path verified end-to-end**.
 4. ✅ **Custom SMTP configured** — **Resend** SMTP wired into Supabase Auth (verified sending domain); confirm/reset emails now deliver reliably (replaces the rate-limited built-in sender). Host `smtp.resend.com`:465, user `resend`, pass = Resend API key.
-5. **App Privacy disclosures** + privacy-policy URL in App Store Connect (collects email + usage).
+5. ✅ **App Privacy disclosures** + privacy-policy URL in App Store Connect — done (app approved; policy live at euralearn.com/privacy).
 6. ✅ **No Apple Sign-In needed** — email/password-only correctly avoids the SIWA mandate.
 
-**C. Capacitor integration (the next stage)**
-7. **Auth email deep links:** confirmation/reset links must return into the WKWebView — add a Capacitor URL scheme + Supabase Redirect-URL allowlist entries.
-8. **Token storage:** `supabase-js` uses `localStorage`; move to Capacitor secure storage before submission.
-9. **Apple Pencil:** verify `pointerType==='pen'` + pressure surface in WKWebView on real iPad.
+**C. Capacitor integration (done — app shipped)**
+7. ✅ **Auth email deep links — obsolete.** All auth emails (signup confirm, email change, password reset) carry 8-digit OTP codes typed into the app; no links, no URL schemes, no redirect allowlist.
+8. ❌ **Token storage:** `supabase-js` still uses `localStorage`; move to Capacitor secure storage. Now post-launch hardening #1 (matters most for guests — an evicted session = lost guest work).
+9. ✅ **Apple Pencil:** exercised on a physical iPad through builds 2–4; shipped.
 
 **D. Before public scale (not submission blockers)**
 10. ✅ **OpenAI budget cap set** — monthly hard cap + alert in the OpenAI dashboard (the real ceiling). Optional per-call `max_tokens` insurance for the `check`/`help` vision calls was **intentionally skipped** (dashboard cap suffices; `chat.py` already caps at 220). Still open as a scale item: a **job queue** — bursts hit OpenAI synchronously (per-user rate limiting is in place).

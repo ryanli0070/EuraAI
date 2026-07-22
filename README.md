@@ -1,4 +1,20 @@
-# EuraAI — Local Setup
+# EuraAI
+
+**Eura Learn is live on the App Store** (v1.0, since July 22, 2026) — an iPad-first
+math tutor where students handwrite their work on a freehand canvas and Orion, the
+in-app AI tutor, checks it step by step. Shipped as a Capacitor-wrapped iOS app.
+
+- **Production:** backend on AWS App Runner, auth/data/storage on Supabase. Source of
+  truth for architecture and current state: [`HANDOFF.md`](HANDOFF.md).
+- **iOS build & device testing:** [`testingapp.md`](testingapp.md).
+- **Frontend tests:** `cd frontend && npm test` (Vitest — see [`frontend/TESTING.md`](frontend/TESTING.md)).
+- **App Store history:** [`appstore/`](appstore/) (checklist, privacy, listing, review replies).
+
+The rest of this README is the **local development setup**.
+
+---
+
+## Local Setup
 
 This repo has two services that you run side by side:
 
